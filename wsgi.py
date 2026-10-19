@@ -298,12 +298,15 @@ def is_authorized(chat_id):
     return result
 
 
-def send_unauthorized_message(token, chat_id):
+def send_unauthorized_message(token, chat_id, first_name=""):
     """پیام به کاربر غیرمجاز"""
     msg = (
         "🔒 **این ربات خصوصی است**\n\n"
+        f"سلام {first_name}!\n"
+        f"آیدی شما: `{chat_id}`\n\n"
         "شما اجازه استفاده از این ربات را ندارید.\n"
-        "اگر فکر می‌کنید اشتباهی شده، با مدیر تماس بگیرید."
+        "اگر فکر می‌کنید اشتباهی شده، این آیدی را برای مدیر بفرستید:\n"
+        f"`{chat_id}`"
     )
     send_message(token, chat_id, msg)
 
@@ -315,7 +318,7 @@ def handle_start(bot, chat_id, first_name):
     # بررسی دسترسی
     if not is_authorized(chat_id):
         logger.warning(f"کاربر غیرمجاز {first_name} (ID: {chat_id}) تلاش کرد /start بزنه")
-        send_unauthorized_message(config.TELEGRAM_BOT_TOKEN, chat_id)
+        send_unauthorized_message(config.TELEGRAM_BOT_TOKEN, chat_id, first_name)
         return
 
     bot.chat_id = chat_id
