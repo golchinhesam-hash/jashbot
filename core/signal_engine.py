@@ -328,7 +328,7 @@ class SignalEngine:
 
         # تعیین جهت
         # برای شت‌کوین، آستانه رأی کمتر چون نوسان بالاتره
-        vote_threshold = 3 if is_shitcoin else 4
+        vote_threshold = 2 if is_shitcoin else 3
 
         if direction_votes["LONG"] >= vote_threshold and direction_votes["LONG"] > direction_votes["SHORT"]:
             direction = "LONG"
@@ -368,10 +368,10 @@ class SignalEngine:
 
         # معیارهای متفاوت برای فیوچر vs spot، و شت‌کوین vs اصلی
         if SIGNAL_TYPE == "futures":
-            min_rr = 2.0  # حداقل R:R برای فیوچر
+            min_rr = 1.5  # حداقل R:R برای فیوچر (کاهش برای سیگنال‌های بیشتر)
             min_profit = MIN_FUTURES_PROFIT_SHITCOIN if is_shitcoin else MIN_FUTURES_PROFIT_MAIN
         else:
-            min_rr = 1.5 if is_shitcoin else MIN_RISK_REWARD
+            min_rr = 1.2 if is_shitcoin else MIN_RISK_REWARD
             min_profit = MIN_TARGET_PROFIT_SHITCOIN if is_shitcoin else MIN_TARGET_PROFIT
 
         # بررسی معیارها

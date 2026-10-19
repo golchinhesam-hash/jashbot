@@ -303,6 +303,7 @@ class TelegramBot:
 
         # === مرحله 2: Deep Scan (فقط کاندیدها) ===
         found_signals = []
+        neutral_picks = []  # ارزهای امتیاز بالا ولی NEUTRAL
         for i, (quick_result, sym_info) in enumerate(candidates):
             symbol = sym_info["symbol"]
             base = sym_info["base"]
@@ -331,6 +332,9 @@ class TelegramBot:
                     msg = self.engine.format_signal_message(signal)
                     if msg:
                         self._send_to_channel(msg)
+                elif signal and signal.get("score", 0) >= 50:
+                    # نگه داشتن ارزهای امتیاز بالا ولی خنثی برای watch list
+                    neutral_picks.append(signal)
             except Exception as e:
                 logger.error(f"خطا در deep scan {symbol}: {e}")
 
@@ -342,7 +346,32 @@ class TelegramBot:
         if progress_callback:
             progress_callback(f"✅ اسکن کامل شد!\n📊 {scan_count} ارز بررسی شد\n🎯 {len(candidates)} کاندید → {len(found_signals)} سیگنال")
 
+        # اگه سیگنال پیدا نشد، top picks رو بفرست
+        if not found_signals and neutral_picks:
+            neutral_picks.sort(key=lambda x: x.get("score", 0), reverse=True)
+            self._send_top_picks(neutral_picks[:5])
+
         return found_signals
+
+    def _send_top_picks(self, picks):
+        """ارسال بهترین ارزهای خنثی به عنوان watch list"""
+        if not picks:
+            return
+        msg = "📊 Top Picks - فرصت‌های تحت نظر\n(سیگنال کامل نیست ولی امتیاز بالایی دارن)\n\n"
+        for i, s in enumerate(picks, 1):
+            emoji = "📈" if s.get("score", 0) >= 60 else "➡️"
+            msg += (
+                f"{i}. {emoji} {s.get('base', s.get('symbol', ''))}\n"
+                f"   امتیاز: {s.get('score', 0):.0f}/100\n"
+            )
+            reasons = s.get("reasons", [])
+            if reasons:
+                for r in reasons[:3]:
+                    msg += f"   • {r}\n"
+            msg += "\n"
+
+        msg += "💡 این ارزها سیگنال کامل ندارن ولی نشونه‌های خوبی دارن. تحت نظر بگیر."
+        self._send_to_channel(msg)
 
     def _on_whale_alert(self, alert):
         """کال‌بک هشدار نهنگ از Whale Radar"""

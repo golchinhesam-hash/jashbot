@@ -159,8 +159,8 @@ SHITCOIN_SYMBOLS = [
 # حداقل حجم ترید نهنگ برای شت‌کوین‌ها (کمتر چون حجم کل کمتره)
 WHALE_TX_THRESHOLD_SHITCOIN = 50_000  # 50 هزار دلار برای شت‌کوین
 
-# حداقل درصد سود برای سیگنال شت‌کوین (بالاتر چون نوسان بالاتره)
-MIN_TARGET_PROFIT_SHITCOIN = 15.0  # 15%
+# حداقل درصد سود برای سیگنال شت‌کوین
+MIN_TARGET_PROFIT_SHITCOIN = 8.0  # 8%
 
 # تایم‌فریم‌های تحلیل
 TIMEFRAMES = ["15m", "1h", "4h"]
@@ -170,10 +170,10 @@ CANDLE_LIMIT = 200
 
 # ===================== تنظیمات سیگنال =====================
 # حداقل درصد سود مورد انتظار
-MIN_TARGET_PROFIT = 10.0  # 10%
+MIN_TARGET_PROFIT = 5.0  # 5%
 
 # حداقل Risk/Reward
-MIN_RISK_REWARD = 2.0
+MIN_RISK_REWARD = 1.5
 
 # حداکثر درصد استاپ لاس (نسبت به قیمت ورود)
 MAX_STOP_LOSS_PCT = 5.0  # 5%
@@ -205,12 +205,12 @@ FUTURES_TP_RATIOS = [2.0, 4.0, 7.0]  # R:R برای ارزهای اصلی
 FUTURES_TP_RATIOS_SHITCOIN = [3.0, 6.0, 10.0]  # R:R برای شت‌کوین
 
 # حداقل درصد سود برای سیگنال فیوچر
-MIN_FUTURES_PROFIT_MAIN = 10.0      # 10% برای ارزهای اصلی
-MIN_FUTURES_PROFIT_SHITCOIN = 20.0  # 20% برای شت‌کوین
+MIN_FUTURES_PROFIT_MAIN = 5.0       # 5% برای ارزهای اصلی
+MIN_FUTURES_PROFIT_SHITCOIN = 8.0   # 8% برای شت‌کوین
 
-# حداقل امتیاز برای سیگنال فیوچر (سخت‌گیرانه‌تر برای جلوگیری از استاپ)
-MIN_FUTURES_SCORE_MAIN = 70       # 70/100 برای ارزهای اصلی
-MIN_FUTURES_SCORE_SHITCOIN = 60   # 60/100 برای شت‌کوین
+# حداقل امتیاز برای سیگنال فیوچر
+MIN_FUTURES_SCORE_MAIN = 58       # 58/100 برای ارزهای اصلی
+MIN_FUTURES_SCORE_SHITCOIN = 50   # 50/100 برای شت‌کوین
 
 # ===================== تنظیمات Order Flow =====================
 # تعداد کندل‌ها برای تحلیل order flow
@@ -248,8 +248,7 @@ SCAN_INTERVAL = 480  # 8 دقیقه
 SIGNAL_COOLDOWN = 3600  # 1 ساعت برای هر ارز
 
 # حداقل امتیاز سیگنال برای ارسال
-# کاهش به 65 چون ارزهای بیشتری پایش میشن
-MIN_SIGNAL_SCORE = 65  # از 100
+MIN_SIGNAL_SCORE = 55  # از 100
 
 # ===================== لاگ =====================
 LOG_LEVEL = "INFO"
