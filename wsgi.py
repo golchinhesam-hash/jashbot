@@ -33,6 +33,9 @@ logger = logging.getLogger(__name__)
 # ===================== Flask Web Server =====================
 app = Flask(__name__)
 
+# Global bot instance for diagnostics
+_bot_instance = None
+
 @app.route("/")
 def health():
     return jsonify({
@@ -44,6 +47,89 @@ def health():
 @app.route("/health")
 def health_check():
     return "OK", 200
+
+@app.route("/debug")
+def debug():
+    """Diagnostic endpoint - tests API connectivity and scanning"""
+    import sys
+    sys.path.insert(0, '.')
+    
+    results = {"tests": []}
+    
+    # Test 1: Binance ping
+    try:
+        import requests
+        for base in ["https://data-api.binance.vision", "https://api.binance.com"]:
+            try:
+                r = requests.get(f"{base}/api/v3/ping", timeout=5)
+                results["tests"].append({"test": f"ping {base}", "status": r.status_code, "ok": r.status_code == 200})
+            except Exception as e:
+                results["tests"].append({"test": f"ping {base}", "error": str(e), "ok": False})
+    except Exception as e:
+        results["tests"].append({"test": "requests import", "error": str(e), "ok": False})
+    
+    # Test 2: Binance klines
+    try:
+        r = requests.get("https://data-api.binance.vision/api/v3/klines", 
+                         params={"symbol": "BTCUSDT", "interval": "1h", "limit": 5}, timeout=10)
+        results["tests"].append({"test": "binance klines", "status": r.status_code, "data_count": len(r.json()) if r.status_code == 200 else 0, "ok": r.status_code == 200})
+    except Exception as e:
+        results["tests"].append({"test": "binance klines", "error": str(e), "ok": False})
+    
+    # Test 3: Bybit klines
+    try:
+        r = requests.get("https://api.bybit.com/v5/market/kline",
+                         params={"category": "spot", "symbol": "BTCUSDT", "interval": "60", "limit": 5}, timeout=10)
+        data = r.json()
+        results["tests"].append({"test": "bybit klines", "status": r.status_code, "retCode": data.get("retCode"), "data_count": len(data.get("result",{}).get("list",[])), "ok": data.get("retCode") == 0})
+    except Exception as e:
+        results["tests"].append({"test": "bybit klines", "error": str(e), "ok": False})
+    
+    # Test 4: Bybit ticker
+    try:
+        r = requests.get("https://api.bybit.com/v5/market/tickers", 
+                         params={"category": "spot"}, timeout=10)
+        data = r.json()
+        results["tests"].append({"test": "bybit tickers", "status": r.status_code, "retCode": data.get("retCode"), "data_count": len(data.get("result",{}).get("list",[])), "ok": data.get("retCode") == 0})
+    except Exception as e:
+        results["tests"].append({"test": "bybit tickers", "error": str(e), "ok": False})
+    
+    # Test 5: Bot instance status
+    if _bot_instance:
+        results["bot_status"] = {
+            "running": _bot_instance.running,
+            "chat_id": _bot_instance.chat_id,
+            "last_signals_count": len(_bot_instance.last_signals),
+            "whale_alerts_count": len(_bot_instance.whale_alerts),
+            "radar_running": _bot_instance.radar.running if hasattr(_bot_instance, 'radar') else False,
+        }
+    else:
+        results["bot_status"] = {"running": False, "error": "bot not initialized yet"}
+    
+    # Test 6: Quick signal test on BTC
+    try:
+        from core.market_data import MarketData
+        md = MarketData()
+        candles = md.get_candles("BTCUSDT", "1h", 100)
+        results["tests"].append({"test": "get_candles BTCUSDT", "candles": len(candles), "ok": len(candles) > 0})
+        
+        if candles and len(candles) > 5:
+            from core.signal_engine import SignalEngine
+            engine = SignalEngine(md)
+            signal = engine.scan_symbol("BTCUSDT", "BTC", is_shitcoin=False)
+            if signal:
+                results["tests"].append({
+                    "test": "signal BTCUSDT",
+                    "direction": signal.get("direction"),
+                    "score": signal.get("score", 0),
+                    "ok": True
+                })
+            else:
+                results["tests"].append({"test": "signal BTCUSDT", "error": "returned None", "ok": False})
+    except Exception as e:
+        results["tests"].append({"test": "signal BTCUSDT", "error": str(e), "ok": False})
+    
+    return jsonify(results)
 
 
 # ===================== Manual Telegram Polling =====================
@@ -66,6 +152,8 @@ def run_bot():
         # شروع بات و اسکنر
         from core.telegram_bot import TelegramBot
         bot = TelegramBot()
+        global _bot_instance
+        _bot_instance = bot
 
         if TELEGRAM_CHAT_ID:
             bot.chat_id = TELEGRAM_CHAT_ID
