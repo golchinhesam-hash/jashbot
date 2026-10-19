@@ -183,32 +183,43 @@ def run_bot():
                     if not msg:
                         continue
 
-                    text = msg.get("text", "")
+                    text = msg.get("text", "").strip()
                     chat_id = msg.get("chat", {}).get("id")
                     first_name = msg.get("from", {}).get("first_name", "")
 
-                    logger.info(f"📨 پردازش: '{text}' از {first_name} (chat_id={chat_id})")
+                    # Handle commands with bot username (e.g., /users@botname)
+                    # Extract just the command part
+                    if text and text.startswith("/"):
+                        command = text.split()[0].split("@")[0].lower()
+                    else:
+                        command = text.lower()
+
+                    logger.info(f"📨 پردازش: command='{command}' | full='{text}' | از {first_name} (chat_id={chat_id})")
 
                     # پردازش دستورات
-                    if text.startswith("/start"):
+                    if command == "/start":
                         handle_start(bot, chat_id, first_name)
-                    elif text.startswith("/adduser"):
+                    elif command == "/adduser":
                         handle_adduser(bot, chat_id, text)
-                    elif text.startswith("/users"):
+                    elif command == "/users":
                         handle_users(bot, chat_id)
-                    elif text.startswith("/status"):
+                    elif command == "/status":
                         handle_status(bot, chat_id)
-                    elif text.startswith("/scan"):
+                    elif command == "/scan":
                         handle_scan(bot, chat_id)
-                    elif text.startswith("/radar"):
+                    elif command == "/radar":
                         handle_radar(bot, chat_id)
-                    elif text.startswith("/last"):
+                    elif command == "/last":
                         handle_last(bot, chat_id)
-                    elif text.startswith("/help"):
+                    elif command == "/help":
                         handle_help(bot, chat_id)
+                    else:
+                        logger.info(f"⚠️ دستور ناشناس: '{command}' (full: '{text}')")
 
                 except Exception as e:
                     logger.error(f"خطا در پردازش update: {e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
 
             processing = False
 
@@ -282,7 +293,9 @@ def send_message(token, chat_id, text, parse_mode="Markdown"):
 def is_authorized(chat_id):
     """بررسی دسترسی - فقط آیدی‌های مجاز"""
     import config
-    return chat_id in config.AUTHORIZED_CHAT_IDS
+    result = chat_id in config.AUTHORIZED_CHAT_IDS
+    logger.info(f"🔐 is_authorized: chat_id={chat_id} (type={type(chat_id).__name__}), authorized={config.AUTHORIZED_CHAT_IDS}, result={result}")
+    return result
 
 
 def send_unauthorized_message(token, chat_id):
@@ -537,6 +550,7 @@ def handle_adduser(bot, chat_id, text):
 def handle_users(bot, chat_id):
     """لیست کاربران مجاز - فقط برای ادمین"""
     import config
+    logger.info(f"🔍 handle_users called with chat_id={chat_id}")
 
     if not is_authorized(chat_id):
         send_unauthorized_message(config.TELEGRAM_BOT_TOKEN, chat_id)
