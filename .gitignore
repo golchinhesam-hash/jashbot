@@ -5,3 +5,6 @@ bot.log
 .env
 *.log
 .cred
+uptimerobot_setup.js
+ur-*.png
+*.png
