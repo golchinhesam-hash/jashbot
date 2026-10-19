@@ -108,7 +108,7 @@ class MarketData:
                 skip = ["UP", "DOWN", "BULL", "BEAR"]
                 if any(base.endswith(s) for s in skip):
                     continue
-                if base in ["USDC", "BUSD", "TUSD", "DAI", "FDUSD"]:
+                if base in ["USDC", "BUSD", "TUSD", "DAI", "FDUSD", "USD1", "USDS", "PAXG", "XAU", "EUR", "GBP", "TRY", "BRL", "AEUR", "EURI"]:
                     continue
 
                 # فیلتر KCEX: اگه روشن باشه، فقط ارزهای KCEX

@@ -83,22 +83,45 @@ KCEX_SYMBOLS = [
 ]
 
 # اگه True باشه، فقط ارزهای KCEX اسکن میشن
-USE_KCEX_FILTER = True
+# False = همه ارزهای Binance با حداقل حجم (نزدیک به 300 ارز)
+USE_KCEX_FILTER = False
 
 # حداقل حجم معاملات روزانه برای ارزهای اصلی (به USDT)
-# کاهش از 50M به 10M برای اسکن ارزهای بیشتر KCEX
-MIN_24H_VOLUME = 10_000_000  # 10 میلیون دلار
+# کاهش به 500K برای پایش ~300 ارز Binance
+MIN_24H_VOLUME = 500_000  # 500 هزار دلار
 
 # حداقل حجم معاملات روزانه برای شت‌کوین‌ها (کمتر = ارزهای فرعی‌تر هم اسکن میشن)
-# کاهش از 5M به 2M برای پوشش بیشتر شت‌کوین‌های KCEX
-MIN_24H_VOLUME_SHITCOIN = 2_000_000  # 2 میلیون دلار
+MIN_24H_VOLUME_SHITCOIN = 500_000  # 500 هزار دلار
 
 # لیست شت‌کوین‌ها و meme coin‌های معروف که همیشه پایش میشن
-# فقط اونایی که تو KCEX هستن
+# لیست گسترده شامل مهم‌ترین meme/shitcoin‌های بازار
 SHITCOIN_SYMBOLS = [
+    # === Meme Coins بزرگ ===
     "DOGEUSDT",   # Dogecoin
     "SHIBUSDT",   # Shiba Inu
     "PEPEUSDT",   # Pepe
+    "WIFUSDT",    # dogwifhat
+    "BONKUSDT",   # Bonk
+    "FLOKIUSDT",  # Floki
+    "MEMEUSDT",   # Memecoin
+    "BOMEUSDT",   # Book of Meme
+    "POPCATUSDT", # Popcat
+    "PNUTUSDT",   # Peanut the Squirrel
+    "ACTUSDT",    # Act I: The AI prophecy
+    "GOATUSDT",   # Goatseus Maximus
+    "MOODENGUSDT",# Moo Deng
+    "TRUMPUSDT",  # Official Trump
+    "MELANIAUSDT",# Melania
+    "AI16ZUSDT",  # ai16z
+    "VIRTUALUSDT",# Virtuals Protocol
+    "SWARMSUSDT", # Swarms
+    "NEIROUSDT",  # Neiro
+    "TURBOUSDT",  # Turbo
+    "ORDIUSDT",   # Ordinals
+    "SATSUSDT",   # 1000SATS
+    "RATSUSDT",   # Rats
+    "MOBILEUSDT", # Helium Mobile
+    # === Pump.fun / Meme جدید ===
     "PUMPUSDT",   # Pump Fun
     "MUSDT",      # MemeCore
     "RAINUSDT",   # Rain
@@ -108,11 +131,33 @@ SHITCOIN_SYMBOLS = [
     "ASTERUSDT",  # Aster
     "WLFIUSDT",   # World Liberty Financial
     "SKYUSDT",    # Sky
-    "MORPHOUSDT", # Morpho
+    "MORPHOUSDT",# Morpho
+    # === Meme/Community ===
+    "1000SATSUSDT",# 1000SATS
+    "CHZUSDT",    # Chiliz
+    "GALAUSDT",   # Gala
+    "MANAUSDT",   # Decentraland
+    "SANDUSDT",   # Sandbox
+    "AXSUSDT",    # Axie Infinity
+    "ALICEUSDT",  # My Neighbor Alice
+    "SFPUSDT",    # SafePal
+    "LAZIOUSDT",  # Lazio
+    "PORTOUSDT",  # Port3
+    "CFXUSDT",    # Conflux
+    "MASKUSDT",   # Mask
+    "DODOUSDT",   # Dodo
+    "RVNUSDT",    # Ravencoin
+    "DUSKUSDT",   # Dusk
+    "KEYUSDT",    # SelfKey
+    "NKNUSDT",    # NKN
+    "NULSUSDT",   # Nuls
+    "VOXELUSDT",  # Voxies
+    "GFTUSDT",    # GuildFi
+    "COCOSUSDT",  # Cocos
 ]
 
 # حداقل حجم ترید نهنگ برای شت‌کوین‌ها (کمتر چون حجم کل کمتره)
-WHALE_TX_THRESHOLD_SHITCOIN = 100_000  # 100 هزار دلار برای شت‌کوین
+WHALE_TX_THRESHOLD_SHITCOIN = 50_000  # 50 هزار دلار برای شت‌کوین
 
 # حداقل درصد سود برای سیگنال شت‌کوین (بالاتر چون نوسان بالاتره)
 MIN_TARGET_PROFIT_SHITCOIN = 15.0  # 15%
@@ -164,8 +209,8 @@ MIN_FUTURES_PROFIT_MAIN = 10.0      # 10% برای ارزهای اصلی
 MIN_FUTURES_PROFIT_SHITCOIN = 20.0  # 20% برای شت‌کوین
 
 # حداقل امتیاز برای سیگنال فیوچر (سخت‌گیرانه‌تر برای جلوگیری از استاپ)
-MIN_FUTURES_SCORE_MAIN = 75       # 75/100 برای ارزهای اصلی
-MIN_FUTURES_SCORE_SHITCOIN = 65   # 65/100 برای شت‌کوین
+MIN_FUTURES_SCORE_MAIN = 70       # 70/100 برای ارزهای اصلی
+MIN_FUTURES_SCORE_SHITCOIN = 60   # 60/100 برای شت‌کوین
 
 # ===================== تنظیمات Order Flow =====================
 # تعداد کندل‌ها برای تحلیل order flow
@@ -196,13 +241,15 @@ WHALE_SIGNAL_THRESHOLD = 3  # حداقل 3 تراکنش نهنگ در جهت م�
 
 # ===================== تنظیمات اسکن =====================
 # فاصله زمانی بین هر اسکن (ثانیه)
-SCAN_INTERVAL = 300  # 5 دقیقه
+# افزایش به 480 ثانیه (8 دقیقه) چون اسکن 300 ارز زمان بیشتری می‌بره
+SCAN_INTERVAL = 480  # 8 دقیقه
 
 # زمان‌بندی ارسال سیگنال تکراری (ثانیه - برای جلوگیری از اسپم)
 SIGNAL_COOLDOWN = 3600  # 1 ساعت برای هر ارز
 
 # حداقل امتیاز سیگنال برای ارسال
-MIN_SIGNAL_SCORE = 70  # از 100
+# کاهش به 65 چون ارزهای بیشتری پایش میشن
+MIN_SIGNAL_SCORE = 65  # از 100
 
 # ===================== لاگ =====================
 LOG_LEVEL = "INFO"

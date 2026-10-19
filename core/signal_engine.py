@@ -46,6 +46,71 @@ class SignalEngine:
         self.whale = WhaleScanner()
         self.signal_history = {}  # symbol -> last_signal_time
 
+    def quick_scan(self, symbol, base=None, is_shitcoin=False):
+        """
+        اسکن سریع - فقط با klines 1h (1 API call)
+        برای فیلتر اولیه از بین صدها ارز
+        برمی‌گردونه: (symbol, base, is_shitcoin, quick_score, direction_hint)
+        یا None اگه داده ناکافی باشه
+        """
+        try:
+            candles_1h = self.market.get_candles(symbol, "1h", 100)
+            if not candles_1h or len(candles_1h) < 20:
+                return None
+
+            # تحلیل سریع order flow
+            of_result = self.order_flow.analyze_candle_flow(candles_1h)
+            of_score = of_result.get("score", 50)
+            of_trend = of_result.get("trend", "neutral")
+
+            # تحلیل سریع liquidity
+            sr = self.liquidity.find_support_resistance(candles_1h)
+            current_price = candles_1h[-1]["close"]
+
+            liq_score = 50
+            direction_hint = "NEUTRAL"
+
+            nearest_support = sr.get("nearest_support")
+            nearest_resistance = sr.get("nearest_resistance")
+
+            if nearest_support and nearest_resistance:
+                support_dist = (current_price - nearest_support) / current_price * 100
+                resistance_dist = (nearest_resistance - current_price) / current_price * 100
+
+                if support_dist < 3:
+                    liq_score += 15
+                    direction_hint = "LONG"
+                elif resistance_dist < 3:
+                    liq_score -= 15
+                    direction_hint = "SHORT"
+
+            # CVD سریع
+            cvd = self.whale.analyze_cvd(candles_1h)
+            cvd_score = cvd.get("score", 50)
+
+            # ناهنجاری حجم
+            vol_anomalies = self.whale.scan_volume_anomalies(candles_1h)
+            vol_trend = vol_anomalies.get("trend", "neutral")
+
+            # امتیاز سریع
+            quick_score = (of_score + liq_score + cvd_score) / 3
+
+            # تنظیم direction با order flow
+            if of_trend == "bullish" and direction_hint != "SHORT":
+                direction_hint = "LONG"
+            elif of_trend == "bearish" and direction_hint != "LONG":
+                direction_hint = "SHORT"
+            elif vol_trend == "buy" and direction_hint == "NEUTRAL":
+                direction_hint = "LONG"
+            elif vol_trend == "sell" and direction_hint == "NEUTRAL":
+                direction_hint = "SHORT"
+
+            return (symbol, base, is_shitcoin, quick_score, direction_hint)
+
+        except Exception as e:
+            logger.debug(f"خطا در quick_scan {symbol}: {e}")
+            return None
+
     def scan_symbol(self, symbol, base=None, is_shitcoin=False):
         """
         اسکن کامل یک ارز و تولید سیگنال

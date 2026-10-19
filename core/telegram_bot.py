@@ -238,21 +238,22 @@ class TelegramBot:
 
     def run_market_scan(self):
         """
-        اسکن کامل بازار - ارزهای اصلی + شت‌کوین‌ها
+        اسکن کامل بازار - دو مرحله‌ای:
+        1. Quick scan: فقط klines 1h برای همه ارزها (سریع)
+        2. Deep scan: اسکن کامل فقط برای ارزهای امیدوارکننده
         """
-        logger.info("شروع اسکن بازار (شامل شت‌کوین‌ها)...")
+        logger.info("شروع اسکن بازار (دو مرحله‌ای)...")
         symbols = self.market.get_usdt_symbols()
 
         if not symbols:
             logger.warning("هیچ ارزی یافت نشد!")
             return []
 
-        found_signals = []
-        scan_count = 0
-        main_count = sum(1 for s in symbols if not s.get("is_shitcoin", False))
-        shit_count = sum(1 for s in symbols if s.get("is_shitcoin", False))
-        logger.info(f"اسکن {main_count} ارز اصلی + {shit_count} شت‌کوین")
+        logger.info(f"تعداد {len(symbols)} ارز برای quick scan")
 
+        # === مرحله 1: Quick Scan (سریع) ===
+        candidates = []
+        scan_count = 0
         for sym_info in symbols:
             symbol = sym_info["symbol"]
             base = sym_info["base"]
@@ -263,8 +264,28 @@ class TelegramBot:
                 continue
 
             scan_count += 1
+            result = self.engine.quick_scan(symbol, base, is_shitcoin=is_shitcoin)
+            if result:
+                _, _, _, quick_score, direction = result
+                # فقط ارزهایی که امتیاز سریع بالای 55 دارن یا جهت مشخص دارن
+                if direction != "NEUTRAL" or quick_score >= 55:
+                    candidates.append((result, sym_info))
+
+            # مکث کوتاه بین ارزها
+            time.sleep(0.15)
+
+        logger.info(f"Quick scan کامل شد: {scan_count} ارز بررسی شد، {len(candidates)} کاندید برای deep scan")
+
+        # === مرحله 2: Deep Scan (فقط کاندیدها) ===
+        found_signals = []
+        for (quick_result, sym_info) in candidates:
+            symbol = sym_info["symbol"]
+            base = sym_info["base"]
+            is_shitcoin = sym_info.get("is_shitcoin", False)
+            _, _, _, quick_score, direction_hint = quick_result
+
             tag = " 🐕" if is_shitcoin else ""
-            logger.info(f"اسکن {scan_count}: {symbol}{tag} (حجم: {sym_info['volume']/1e6:.1f}M)")
+            logger.info(f"Deep scan: {symbol}{tag} (quick_score: {quick_score:.0f}, hint: {direction_hint})")
 
             signal = self.engine.scan_symbol(symbol, base, is_shitcoin=is_shitcoin)
 
@@ -277,16 +298,15 @@ class TelegramBot:
                 if len(self.last_signals) > 20:
                     self.last_signals = self.last_signals[-20:]
 
-            # ارسال سیگنال فوری
-            if signal and signal.get("direction") != "NEUTRAL":
+                # ارسال سیگنال فوری
                 msg = self.engine.format_signal_message(signal)
                 if msg:
                     self._send_to_channel(msg)
 
-            # مکث بین اسکن ارزها (کمتر برای شت‌کوین چون سریع‌تر)
-            time.sleep(0.5 if is_shitcoin else 1)
+            # مکث بین deep scan (کمتر چون تعداد کمتره)
+            time.sleep(0.3)
 
-        logger.info(f"اسکن کامل شد. {scan_count} ارز بررسی شد. {len(found_signals)} سیگنال یافت شد.")
+        logger.info(f"اسکن کامل شد. {len(candidates)} کاندید بررسی شد. {len(found_signals)} سیگنال یافت شد.")
         return found_signals
 
     def _on_whale_alert(self, alert):
