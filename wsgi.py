@@ -6,12 +6,17 @@ Gunicorn entry point for Render/Railway/Heroku deployment
 نکته مهم: Render توی پلن web service منتظر می‌شه تا یه پورت باز بشه
 پس یه وب‌سرور ساده (Flask) راه‌اندازی می‌کنیم که فقط برای health check هست
 بات تلگرام توی یه thread جداگانه اجرا می‌شه
+
+روش polling: مستقیم با Telegram Bot API (getUpdates) — نه از طریق python-telegram-bot async
+چون asyncio توی thread غیر اصلی روی Render مشکل ایجاد می‌کنه
 """
 import os
 import logging
 import sys
 import threading
 import time
+import json
+import requests as req_lib
 from flask import Flask, jsonify
 
 # تنظیم لاگ
@@ -26,7 +31,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ===================== Flask Web Server =====================
-# این فقط برای health check Render هست
 app = Flask(__name__)
 
 @app.route("/")
@@ -42,9 +46,9 @@ def health_check():
     return "OK", 200
 
 
-# ===================== Bot Thread =====================
+# ===================== Manual Telegram Polling =====================
 def run_bot():
-    """اجرای بات تلگرام توی thread جداگانه"""
+    """اجرای بات تلگرام با polling مستقیم (بدون async)"""
     try:
         from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 
@@ -59,11 +63,10 @@ def run_bot():
         else:
             logger.info("ℹ️ چت آیدی بعد از /start خودکار تنظیم می‌شه")
 
-        # شروع بات
+        # شروع بات و اسکنر
         from core.telegram_bot import TelegramBot
         bot = TelegramBot()
 
-        # اگه چت آیدی موجود بود، اسکنر رو شروع کن
         if TELEGRAM_CHAT_ID:
             bot.chat_id = TELEGRAM_CHAT_ID
             bot.start_scanner_loop()
@@ -72,15 +75,272 @@ def run_bot():
 
         logger.info("🚀 بات روی سرور شروع شد - 24/7 فعال")
 
-        # اجرای polling بات (توی همین thread)
-        bot.run()
+        # ===================== Polling Loop =====================
+        # مستقیم با Telegram API — بدون asyncio
+        base_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
+        offset = 0  # برای ack کردن update‌ها
+        timeout_long = 30  # long polling timeout
+
+        logger.info("📡 شروع polling مستقیم Telegram API...")
+
+        while True:
+            try:
+                params = {"timeout": timeout_long, "limit": 10}
+                if offset > 0:
+                    params["offset"] = offset
+
+                resp = req_lib.get(
+                    f"{base_url}/getUpdates",
+                    params=params,
+                    timeout=timeout_long + 10
+                )
+
+                if resp.status_code != 200:
+                    logger.error(f"خطا getUpdates: {resp.status_code} {resp.text[:200]}")
+                    time.sleep(5)
+                    continue
+
+                data = resp.json()
+                if not data.get("ok"):
+                    logger.error(f"getUpdates not ok: {data}")
+                    time.sleep(5)
+                    continue
+
+                updates = data.get("result", [])
+                for update in updates:
+                    offset = update.get("update_id") + 1
+
+                    msg = update.get("message")
+                    if not msg:
+                        continue
+
+                    text = msg.get("text", "")
+                    chat_id = msg.get("chat", {}).get("id")
+                    first_name = msg.get("from", {}).get("first_name", "")
+
+                    logger.info(f"📨 پیام دریافت شد: '{text}' از {first_name} (chat_id={chat_id})")
+
+                    # پردازش دستورات
+                    if text.startswith("/start"):
+                        handle_start(bot, chat_id, first_name)
+                    elif text.startswith("/status"):
+                        handle_status(bot, chat_id)
+                    elif text.startswith("/scan"):
+                        handle_scan(bot, chat_id)
+                    elif text.startswith("/radar"):
+                        handle_radar(bot, chat_id)
+                    elif text.startswith("/last"):
+                        handle_last(bot, chat_id)
+                    elif text.startswith("/help"):
+                        handle_help(bot, chat_id)
+
+            except req_lib.exceptions.Timeout:
+                # normal for long polling
+                continue
+            except Exception as e:
+                logger.error(f"خطا در حلقه polling: {e}")
+                time.sleep(5)
 
     except Exception as e:
         logger.error(f"خطای بحرانی بات: {e}")
-        # restart بعد از 10 ثانیه
         logger.info("ری‌استارت بات بعد از 10 ثانیه...")
         time.sleep(10)
         run_bot()
+
+
+# ===================== Command Handlers =====================
+def send_message(token, chat_id, text, parse_mode="Markdown"):
+    """ارسال پیام به تلگرام"""
+    try:
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        resp = req_lib.post(url, data={
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": parse_mode
+        }, timeout=15)
+        return resp.json().get("ok", False)
+    except Exception as e:
+        logger.error(f"خطا در ارسال: {e}")
+        return False
+
+
+def handle_start(bot, chat_id, first_name):
+    """پردازش /start"""
+    import config
+
+    bot.chat_id = chat_id
+    config.TELEGRAM_CHAT_ID = chat_id
+    if not config.ADMIN_IDS:
+        config.ADMIN_IDS = [chat_id]
+
+    logger.info(f"کاربر {first_name} (ID: {chat_id}) بات رو استارت زد")
+
+    msg = (
+        f"🤖 ربات سیگنال کریپتو + Whale Radar\n\n"
+        f"سلام {first_name}! چت آیدی شما ثبت شد: `{chat_id}`\n\n"
+        f"من بازار ارزهای دیجیتال رو اسکن می‌کنم و "
+        f"سیگنال‌های خرید و فروش با تحلیل زیر ارائه می‌دم:\n\n"
+        f"📊 Order Flow - جریان سفارشات\n"
+        f"💧 Liquidity - نواحی نقدینگی\n"
+        f"🐋 Whale Scanner - فعالیت نهنگ‌ها\n"
+        f"⚡ Whale Radar - هشدار لحظه‌ای نهنگ (WebSocket)\n\n"
+        f"دستورات:\n"
+        f"/status - وضعیت بات\n"
+        f"/scan - اسکن دستی بازار\n"
+        f"/radar - وضعیت Whale Radar لحظه‌ای\n"
+        f"/last - آخرین سیگنال‌ها\n"
+        f"/help - راهنما\n\n"
+        f"⚡ Whale Radar فعال شد - هشدار نهنگ‌ها رو لحظه‌ای می‌گیری"
+    )
+    send_message(config.TELEGRAM_BOT_TOKEN, chat_id, msg)
+
+    if not bot.running:
+        bot.start_scanner_loop()
+    if not bot.radar.running:
+        bot.radar.start()
+
+
+def handle_status(bot, chat_id):
+    """پردازش /status"""
+    import config
+    status = "✅ فعال" if bot.running else "❌ غیرفعال"
+    radar_stats = bot.radar.get_stats()
+    binance_stats = radar_stats.get("binance", {})
+    bybit_stats = radar_stats.get("bybit", {})
+
+    msg = (
+        f"📊 وضعیت بات\n\n"
+        f"اسکنر دوره‌ای: {status}\n"
+        f"فاصله اسکن: {config.SCAN_INTERVAL} ثانیه\n"
+        f"تعداد سیگنال ارسالی: {len(bot.last_signals)}\n"
+        f"چت آیدی: {bot.chat_id or config.TELEGRAM_CHAT_ID}\n\n"
+        f"🐋 Whale Radar:\n"
+        f"  وضعیت کلی: {'✅' if radar_stats.get('running') else '❌'}\n"
+        f"  ارزهای پایش: {radar_stats.get('symbols_count', 0)}\n"
+        f"  کل هشدارها: {radar_stats.get('total_alerts', 0)}\n\n"
+        f"  Binance:\n"
+        f"    اتصال: {'✅' if binance_stats.get('connected') else '❌'}\n"
+        f"    ترید‌ها: {binance_stats.get('total_trades', 0)}\n"
+        f"    نهنگ: {binance_stats.get('whale_trades', 0)}\n"
+        f"    هشدار: {binance_stats.get('alerts_sent', 0)}\n\n"
+        f"  Bybit:\n"
+        f"    اتصال: {'✅' if bybit_stats.get('connected') else '❌'}\n"
+        f"    ترید‌ها: {bybit_stats.get('total_trades', 0)}\n"
+        f"    نهنگ: {bybit_stats.get('whale_trades', 0)}\n"
+        f"    هشدار: {bybit_stats.get('alerts_sent', 0)}\n\n"
+        f"  آخرین به‌روزرسانی: {time.strftime('%H:%M:%S')}"
+    )
+    send_message(config.TELEGRAM_BOT_TOKEN, chat_id, msg)
+
+
+def handle_scan(bot, chat_id):
+    """پردازش /scan"""
+    import config
+    if config.ADMIN_IDS and chat_id not in config.ADMIN_IDS:
+        send_message(config.TELEGRAM_BOT_TOKEN, chat_id, "❌ شما دسترسی ادمین ندارید.")
+        return
+
+    send_message(config.TELEGRAM_BOT_TOKEN, chat_id, "🔍 شروع اسکن بازار... لطفاً صبر کنید.")
+
+    def do_scan():
+        found = bot.run_market_scan()
+        if found:
+            for signal in found:
+                msg = bot.engine.format_signal_message(signal)
+                if msg:
+                    send_message(config.TELEGRAM_BOT_TOKEN, chat_id, msg)
+        else:
+            send_message(config.TELEGRAM_BOT_TOKEN, chat_id, "❌ هیچ سیگنال معتبری در حال حاضر یافت نشد.")
+
+    thread = threading.Thread(target=do_scan)
+    thread.start()
+
+
+def handle_radar(bot, chat_id):
+    """پردازش /radar"""
+    import config
+    stats = bot.radar.get_stats()
+    if not bot.radar.running:
+        send_message(config.TELEGRAM_BOT_TOKEN, chat_id, "❌ Whale Radar فعال نیست. /start بزنید.")
+        return
+
+    msg = (
+        f"🐋 Whale Radar - وضعیت لحظه‌ای\n\n"
+        f"🔗 Binance: {'✅ متصل' if stats.get('binance', {}).get('connected') else '❌ قطع'}\n"
+        f"🔗 Bybit: {'✅ متصل' if stats.get('bybit', {}).get('connected') else '❌ قطع'}\n"
+        f"📊 ارزهای پایش: {stats.get('symbols_count', 0)}\n"
+        f"⚡ کل هشدارها: {stats.get('total_alerts', 0)}\n\n"
+        f"آخرین هشدارها:\n"
+    )
+
+    if bot.whale_alerts:
+        for a in bot.whale_alerts[-5:]:
+            emoji = "🟢" if a.get("direction") == "buy" else "🔴"
+            alert_type = a.get("type", "")
+            if alert_type == "SINGLE_WHALE":
+                msg += (
+                    f"  {emoji} {a.get('base', '')} - {a.get('direction_farsi', '')} "
+                    f"{a.get('value_usdt', 0)/1e6:.1f}M "
+                    f"({a.get('exchange', '')}) "
+                    f"@ {a.get('time_str', '')}\n"
+                )
+            else:
+                msg += (
+                    f"  {emoji} {a.get('base', '')} - {a.get('direction_farsi', '')} "
+                    f"{a.get('cluster_count', 0)} ترید "
+                    f"({a.get('total_value_usdt', 0)/1e6:.1f}M) "
+                    f"@ {a.get('time_str', '')}\n"
+                )
+    else:
+        msg += "  هنوز هشداری دریافت نشده.\n"
+
+    msg += f"\n⏰ {time.strftime('%H:%M:%S')}"
+    send_message(config.TELEGRAM_BOT_TOKEN, chat_id, msg)
+
+
+def handle_last(bot, chat_id):
+    """پردازش /last"""
+    import config
+    if not bot.last_signals:
+        send_message(config.TELEGRAM_BOT_TOKEN, chat_id, "📭 هنوز سیگنالی ارسال نشده.")
+        return
+
+    msg = "📋 **آخرین سیگنال‌ها:**\n\n"
+    for s in bot.last_signals[-5:]:
+        direction_emoji = "🟢" if s.get("direction") == "LONG" else "🔴"
+        msg += (
+            f"{direction_emoji} **{s.get('base', s.get('symbol', ''))}** "
+            f"- {s.get('direction')} "
+            f"(امتیاز: {s.get('score', 0):.0f})\n"
+            f"   ورود: {s.get('entry', 0):.4f}\n\n"
+        )
+
+    send_message(config.TELEGRAM_BOT_TOKEN, chat_id, msg)
+
+
+def handle_help(bot, chat_id):
+    """پردازش /help"""
+    import config
+    msg = (
+        "📖 **راهنمای ربات**\n\n"
+        "**دستورات:**\n"
+        "/start - معرفی ربات\n"
+        "/status - وضعیت فعلی\n"
+        "/scan - اسکن دستی بازار\n"
+        "/last - آخرین سیگنال‌ها\n"
+        "/help - این راهنما\n\n"
+        "**روش تحلیل:**\n"
+        "این ربات ارزهای USDT رو بر اساس 3 معیار تحلیل می‌کنه:\n\n"
+        "1️⃣ **Order Flow:** جریان خرید و فروش\n"
+        "2️⃣ **Liquidity:** حمایت/مقاومت و استخر نقدینگی\n"
+        "3️⃣ **Whale Activity:** فعالیت نهنگ‌ها و CVD\n\n"
+        "**معیار سیگنال:**\n"
+        "• حداقل 10% سود مورد انتظار\n"
+        "• حداقل 2:1 Risk/Reward\n"
+        "• استاپ لاس دقیق زیر حمایت/بالای مقاومت\n\n"
+        "⚠️ مسئولیت معامله با شماست."
+    )
+    send_message(config.TELEGRAM_BOT_TOKEN, chat_id, msg)
 
 
 # شروع بات توی thread جدا قبل از اجرای وب‌سرور
