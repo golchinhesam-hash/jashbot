@@ -168,8 +168,49 @@ def run_bot():
         base_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
         offset = 0  # برای ack کردن update‌ها
         timeout_long = 30  # long polling timeout
+        pending_updates = []  # صف update ها
+        processing = False
 
         logger.info("📡 شروع polling مستقیم Telegram API...")
+
+        def process_updates():
+            """پردازش update ها توی thread جدا"""
+            nonlocal pending_updates, processing
+            while pending_updates:
+                update = pending_updates.pop(0)
+                try:
+                    msg = update.get("message")
+                    if not msg:
+                        continue
+
+                    text = msg.get("text", "")
+                    chat_id = msg.get("chat", {}).get("id")
+                    first_name = msg.get("from", {}).get("first_name", "")
+
+                    logger.info(f"📨 پردازش: '{text}' از {first_name} (chat_id={chat_id})")
+
+                    # پردازش دستورات
+                    if text.startswith("/start"):
+                        handle_start(bot, chat_id, first_name)
+                    elif text.startswith("/adduser"):
+                        handle_adduser(bot, chat_id, text)
+                    elif text.startswith("/users"):
+                        handle_users(bot, chat_id)
+                    elif text.startswith("/status"):
+                        handle_status(bot, chat_id)
+                    elif text.startswith("/scan"):
+                        handle_scan(bot, chat_id)
+                    elif text.startswith("/radar"):
+                        handle_radar(bot, chat_id)
+                    elif text.startswith("/last"):
+                        handle_last(bot, chat_id)
+                    elif text.startswith("/help"):
+                        handle_help(bot, chat_id)
+
+                except Exception as e:
+                    logger.error(f"خطا در پردازش update: {e}")
+
+            processing = False
 
         while True:
             try:
@@ -195,36 +236,18 @@ def run_bot():
                     continue
 
                 updates = data.get("result", [])
-                for update in updates:
-                    offset = update.get("update_id") + 1
 
-                    msg = update.get("message")
-                    if not msg:
-                        continue
+                # Ack کردن سریع offset
+                if updates:
+                    offset = updates[-1].get("update_id", 0) + 1
+                    pending_updates.extend(updates)
+                    logger.info(f"📥 {len(updates)} update دریافت شد. صف: {len(pending_updates)}")
 
-                    text = msg.get("text", "")
-                    chat_id = msg.get("chat", {}).get("id")
-                    first_name = msg.get("from", {}).get("first_name", "")
-
-                    logger.info(f"📨 پیام دریافت شد: '{text}' از {first_name} (chat_id={chat_id})")
-
-                    # پردازش دستورات
-                    if text.startswith("/start"):
-                        handle_start(bot, chat_id, first_name)
-                    elif text.startswith("/adduser"):
-                        handle_adduser(bot, chat_id, text)
-                    elif text.startswith("/users"):
-                        handle_users(bot, chat_id)
-                    elif text.startswith("/status"):
-                        handle_status(bot, chat_id)
-                    elif text.startswith("/scan"):
-                        handle_scan(bot, chat_id)
-                    elif text.startswith("/radar"):
-                        handle_radar(bot, chat_id)
-                    elif text.startswith("/last"):
-                        handle_last(bot, chat_id)
-                    elif text.startswith("/help"):
-                        handle_help(bot, chat_id)
+                # پردازش توی thread جدا (فقط اگه قبلی تموم شده)
+                if pending_updates and not processing:
+                    processing = True
+                    processor = threading.Thread(target=process_updates)
+                    processor.start()
 
             except req_lib.exceptions.Timeout:
                 # normal for long polling
