@@ -319,6 +319,20 @@ def handle_start(bot, chat_id, first_name):
     if not is_authorized(chat_id):
         logger.warning(f"کاربر غیرمجاز {first_name} (ID: {chat_id}) تلاش کرد /start بزنه")
         send_unauthorized_message(config.TELEGRAM_BOT_TOKEN, chat_id, first_name)
+        
+        # اطلاع‌رسانی به ادمین
+        admin_msg = (
+            f"🔔 **درخواست دسترسی جدید**\n\n"
+            f"نام: {first_name}\n"
+            f"آیدی: `{chat_id}`\n"
+            f"یوزرنیم: @{msg.get('from', {}).get('username', 'ندارد')}\n\n"
+            f"برای اضافه کردن:\n"
+            f"`/adduser {chat_id}`"
+        )
+        # به اولین ادمین بفرست
+        if config.AUTHORIZED_CHAT_IDS:
+            send_message(config.TELEGRAM_BOT_TOKEN, config.AUTHORIZED_CHAT_IDS[0], admin_msg)
+        
         return
 
     bot.chat_id = chat_id
