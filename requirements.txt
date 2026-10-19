@@ -3,3 +3,5 @@ python-telegram-bot>=20.0
 aiohttp>=3.8.0
 numpy>=1.24.0
 websocket-client>=1.6.0
+flask>=3.0.0
+gunicorn>=21.0.0
