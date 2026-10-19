@@ -240,17 +240,25 @@ def handle_scan(bot, chat_id):
         send_message(config.TELEGRAM_BOT_TOKEN, chat_id, "❌ شما دسترسی ادمین ندارید.")
         return
 
-    send_message(config.TELEGRAM_BOT_TOKEN, chat_id, "🔍 شروع اسکن بازار... لطفاً صبر کنید.")
+    send_message(config.TELEGRAM_BOT_TOKEN, chat_id, "🔍 شروع اسکن ۳۲۶ ارز... مراحل رو برات می‌فرستم")
+
+    def progress_cb(msg):
+        """ارسال پیام پیشرفت به تلگرام"""
+        send_message(config.TELEGRAM_BOT_TOKEN, chat_id, msg)
 
     def do_scan():
-        found = bot.run_market_scan()
-        if found:
-            for signal in found:
-                msg = bot.engine.format_signal_message(signal)
-                if msg:
-                    send_message(config.TELEGRAM_BOT_TOKEN, chat_id, msg)
-        else:
-            send_message(config.TELEGRAM_BOT_TOKEN, chat_id, "❌ هیچ سیگنال معتبری در حال حاضر یافت نشد.")
+        try:
+            found = bot.run_market_scan(progress_callback=progress_cb)
+            if found:
+                send_message(config.TELEGRAM_BOT_TOKEN, chat_id,
+                    f"📨 {len(found)} سیگنال ارسال شد!")
+            else:
+                send_message(config.TELEGRAM_BOT_TOKEN, chat_id,
+                    "❌ هیچ سیگنال معتبری در حال حاضر یافت نشد.\n💡 بازار رو خنثی می‌کنه - صبر کن تا شرایط عوض شه")
+        except Exception as e:
+            logger.error(f"خطا در اسکن: {e}")
+            send_message(config.TELEGRAM_BOT_TOKEN, chat_id,
+                f"⚠️ خطا در اسکن: {e}")
 
     thread = threading.Thread(target=do_scan)
     thread.start()

@@ -236,24 +236,36 @@ class TelegramBot:
         )
         await update.message.reply_text(msg, parse_mode="Markdown")
 
-    def run_market_scan(self):
+    def run_market_scan(self, progress_callback=None):
         """
         اسکن کامل بازار - دو مرحله‌ای:
         1. Quick scan: فقط klines 1h برای همه ارزها (سریع)
         2. Deep scan: اسکن کامل فقط برای ارزهای امیدوارکننده
+        
+        progress_callback: تابع اختیاری برای ارسال پیشرفت (مثلا به تلگرام)
         """
         logger.info("شروع اسکن بازار (دو مرحله‌ای)...")
+        
+        if progress_callback:
+            progress_callback("📡 مرحله ۱: دریافت لیست ارزها...")
+
         symbols = self.market.get_usdt_symbols()
 
         if not symbols:
             logger.warning("هیچ ارزی یافت نشد!")
             return []
 
-        logger.info(f"تعداد {len(symbols)} ارز برای quick scan")
+        total = len(symbols)
+        logger.info(f"تعداد {total} ارز برای quick scan")
+        
+        if progress_callback:
+            progress_callback(f"🔍 شروع Quick Scan: {total} ارز...")
 
         # === مرحله 1: Quick Scan (سریع) ===
         candidates = []
         scan_count = 0
+        error_count = 0
+        last_progress = 0
         for sym_info in symbols:
             symbol = sym_info["symbol"]
             base = sym_info["base"]
@@ -264,49 +276,72 @@ class TelegramBot:
                 continue
 
             scan_count += 1
-            result = self.engine.quick_scan(symbol, base, is_shitcoin=is_shitcoin)
-            if result:
-                _, _, _, quick_score, direction = result
-                # فقط ارزهایی که امتیاز سریع بالای 55 دارن یا جهت مشخص دارن
-                if direction != "NEUTRAL" or quick_score >= 55:
-                    candidates.append((result, sym_info))
+            
+            # ارسال پیشرفت هر 50 ارز
+            if progress_callback and scan_count % 50 == 0:
+                pct = scan_count * 100 // total
+                progress_callback(f"⏳ Quick Scan: {scan_count}/{total} ({pct}%) - {len(candidates)} کاندید")
+
+            try:
+                result = self.engine.quick_scan(symbol, base, is_shitcoin=is_shitcoin)
+                if result:
+                    _, _, _, quick_score, direction = result
+                    # فقط ارزهایی که امتیاز سریع بالای 55 دارن یا جهت مشخص دارن
+                    if direction != "NEUTRAL" or quick_score >= 55:
+                        candidates.append((result, sym_info))
+            except Exception as e:
+                logger.debug(f"خطا در quick_scan {symbol}: {e}")
+                error_count += 1
 
             # مکث کوتاه بین ارزها
             time.sleep(0.15)
 
-        logger.info(f"Quick scan کامل شد: {scan_count} ارز بررسی شد، {len(candidates)} کاندید برای deep scan")
+        logger.info(f"Quick scan کامل شد: {scan_count} ارز بررسی شد، {len(candidates)} کاندید برای deep scan ({error_count} خطا)")
+        
+        if progress_callback:
+            progress_callback(f"✅ Quick Scan کامل شد: {len(candidates)} کاندید از {scan_count} ارز\n🔬 شروع Deep Scan...")
 
         # === مرحله 2: Deep Scan (فقط کاندیدها) ===
         found_signals = []
-        for (quick_result, sym_info) in candidates:
+        for i, (quick_result, sym_info) in enumerate(candidates):
             symbol = sym_info["symbol"]
             base = sym_info["base"]
             is_shitcoin = sym_info.get("is_shitcoin", False)
             _, _, _, quick_score, direction_hint = quick_result
 
             tag = " 🐕" if is_shitcoin else ""
-            logger.info(f"Deep scan: {symbol}{tag} (quick_score: {quick_score:.0f}, hint: {direction_hint})")
+            logger.info(f"Deep scan {i+1}/{len(candidates)}: {symbol}{tag} (quick_score: {quick_score:.0f}, hint: {direction_hint})")
+            
+            if progress_callback and (i+1) % 10 == 0:
+                progress_callback(f"🔬 Deep Scan: {i+1}/{len(candidates)} - {len(found_signals)} سیگنال")
 
-            signal = self.engine.scan_symbol(symbol, base, is_shitcoin=is_shitcoin)
+            try:
+                signal = self.engine.scan_symbol(symbol, base, is_shitcoin=is_shitcoin)
 
-            if signal and signal.get("direction") != "NEUTRAL":
-                found_signals.append(signal)
-                self.engine.mark_signal_sent(symbol)
-                self.last_signals.append(signal)
+                if signal and signal.get("direction") != "NEUTRAL":
+                    found_signals.append(signal)
+                    self.engine.mark_signal_sent(symbol)
+                    self.last_signals.append(signal)
 
-                # نگهداری فقط 20 سیگنال اخیر
-                if len(self.last_signals) > 20:
-                    self.last_signals = self.last_signals[-20:]
+                    # نگهداری فقط 20 سیگنال اخیر
+                    if len(self.last_signals) > 20:
+                        self.last_signals = self.last_signals[-20:]
 
-                # ارسال سیگنال فوری
-                msg = self.engine.format_signal_message(signal)
-                if msg:
-                    self._send_to_channel(msg)
+                    # ارسال سیگنال فوری
+                    msg = self.engine.format_signal_message(signal)
+                    if msg:
+                        self._send_to_channel(msg)
+            except Exception as e:
+                logger.error(f"خطا در deep scan {symbol}: {e}")
 
             # مکث بین deep scan (کمتر چون تعداد کمتره)
             time.sleep(0.3)
 
         logger.info(f"اسکن کامل شد. {len(candidates)} کاندید بررسی شد. {len(found_signals)} سیگنال یافت شد.")
+        
+        if progress_callback:
+            progress_callback(f"✅ اسکن کامل شد!\n📊 {scan_count} ارز بررسی شد\n🎯 {len(candidates)} کاندید → {len(found_signals)} سیگنال")
+
         return found_signals
 
     def _on_whale_alert(self, alert):
