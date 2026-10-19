@@ -19,9 +19,9 @@ class WhaleScanner:
     """اسکن فعالیت نهنگ‌ها و جابجایی‌های بزرگ"""
 
     def __init__(self):
-        self.tx_threshold = WHALE_TX_THRESHOLD
+        self.tx_threshold = WHALE_TX_THRESHOLD  # 100K (پایین آورده شد)
         self.tx_limit = WHALE_TX_LIMIT
-        self.signal_threshold = WHALE_SIGNAL_THRESHOLD
+        self.signal_threshold = 1  # حداقل 1 ترید نهنگ (پایین آورده شد از 3)
 
     def scan_whale_trades(self, trades):
         """
@@ -48,9 +48,17 @@ class WhaleScanner:
         whale_sell_volume = 0
         whale_trades = []
 
+        # محاسبه مجموع حجم معاملات برای آستانه پویا
+        all_notional = [t["price"] * t["qty"] for t in trades]
+        total_notional = sum(all_notional)
+        avg_trade = total_notional / len(trades) if trades else 0
+
+        # آستانه پویا: ماکزیمم آستانه ثابت و 5x میانگین
+        dynamic_threshold = max(self.tx_threshold, avg_trade * 5)
+
         for t in trades:
             notional = t["price"] * t["qty"]
-            if notional < self.tx_threshold:
+            if notional < dynamic_threshold:
                 continue
 
             whale_trades.append({
@@ -61,17 +69,15 @@ class WhaleScanner:
             })
 
             if t["isBuyerMaker"]:
-                # فروشنده taker => فروش
                 whale_sell_count += 1
                 whale_sell_volume += notional
             else:
-                # خریدار taker => خرید
                 whale_buy_count += 1
                 whale_buy_volume += notional
 
         net_flow = whale_buy_volume - whale_sell_volume
 
-        # تشخیص جهت
+        # تشخیص جهت - با آستانه پایین‌تر
         if whale_buy_count >= self.signal_threshold and whale_buy_count > whale_sell_count:
             direction = "buy"
         elif whale_sell_count >= self.signal_threshold and whale_sell_count > whale_buy_count:
@@ -184,17 +190,20 @@ class WhaleScanner:
 
         for c in recent:
             vol = c["volume"]
-            taker_buy = c.get("takerBuyVolume", 0)
+            taker_buy = c.get("takerBuyVolume", vol * 0.5)
             if vol > 0:
                 delta = taker_buy - (vol - taker_buy)
                 deltas.append(delta)
                 prices.append(c["close"])
 
+        if not deltas:
+            return {"cvd_current": 0, "cvd_trend": "flat", "cvd_divergence": "none", "score": 50}
+
         # CVD تجمعی
         cvd_values = np.cumsum(deltas)
         cvd_current = cvd_values[-1] if len(cvd_values) > 0 else 0
 
-        # روند CVD
+        # روند CVD - مقایسه نیمه اول و دوم
         half = len(cvd_values) // 2
         if half > 0:
             first_half = cvd_values[:half]
@@ -203,9 +212,11 @@ class WhaleScanner:
             avg_first = np.mean(first_half) if len(first_half) > 0 else 0
             avg_second = np.mean(second_half) if len(second_half) > 0 else 0
 
-            if avg_second > avg_first:
+            # آستانه کوچک برای جلوگیری از flat false
+            diff_pct = (avg_second - avg_first) / (abs(avg_first) + 1e-9)
+            if diff_pct > 0.02:
                 cvd_trend = "rising"
-            elif avg_second < avg_first:
+            elif diff_pct < -0.02:
                 cvd_trend = "falling"
             else:
                 cvd_trend = "flat"
@@ -213,14 +224,17 @@ class WhaleScanner:
             cvd_trend = "flat"
 
         # بررسی واگرایی
-        price_trend = "rising" if prices[-1] > prices[0] else "falling"
-        cvd_direction = "rising" if cvd_current > 0 else "falling"
+        if len(prices) >= 2:
+            price_trend = "rising" if prices[-1] > prices[0] else "falling"
+            cvd_direction = "rising" if cvd_current > 0 else "falling"
 
-        divergence = "none"
-        if price_trend == "rising" and cvd_direction == "falling":
-            divergence = "bearish"  # واگرایی نزولی - هشدار
-        elif price_trend == "falling" and cvd_direction == "rising":
-            divergence = "bullish"  # واگرایی صعودی - فرصت خرید
+            divergence = "none"
+            if price_trend == "rising" and cvd_direction == "falling":
+                divergence = "bearish"
+            elif price_trend == "falling" and cvd_direction == "rising":
+                divergence = "bullish"
+        else:
+            divergence = "none"
 
         score = 50
         if cvd_trend == "rising":

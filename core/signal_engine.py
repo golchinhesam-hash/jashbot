@@ -231,12 +231,12 @@ class SignalEngine:
             # اگه نزدیک حمایت باشه = فرصت خرید
             if support_dist < 3:
                 direction_votes["LONG"] += 2
-                liq_score += 15
+                liq_score += 20  # وزن بیشتر برای نزدیکی S/R
                 reasons.append(f"نزدیک حمایت ({support_dist:.1f}% فاصله)")
             # اگه نزدیک مقاومت باشه = فرصت فروش
             elif resistance_dist < 3:
                 direction_votes["SHORT"] += 2
-                liq_score -= 15
+                liq_score -= 20  # وزن بیشتر برای نزدیکی S/R
                 reasons.append(f"نزدیک مقاومت ({resistance_dist:.1f}% فاصله)")
 
             # فاصله سود تا مقاومت
@@ -327,8 +327,8 @@ class SignalEngine:
         total_score = sum(s[1] for s in scores) / len(scores) if scores else 50
 
         # تعیین جهت
-        # برای شت‌کوین، آستانه رأی کمتر چون نوسان بالاتره
-        vote_threshold = 2 if is_shitcoin else 3
+        # با داده KuCoin (100 ترید، تخمین takerBuyVolume)، آستانه رأی پایین‌تر
+        vote_threshold = 2  # هم برای شت‌کوین هم ارز اصلی - 2 رأی کافیه
 
         if direction_votes["LONG"] >= vote_threshold and direction_votes["LONG"] > direction_votes["SHORT"]:
             direction = "LONG"
@@ -472,6 +472,10 @@ class SignalEngine:
 
             # محاسبه ریسک
             risk = entry - stop_loss
+            if risk <= 0 or entry <= 0:
+                # اگه ریسک صفر یا منفی باشه، استاپ پیش‌فرض
+                stop_loss = entry * 0.97 if direction == "LONG" else entry * 1.03
+                risk = abs(entry - stop_loss)
 
             # Take Profit - برای فیوچر اهداف بالاتر
             if SIGNAL_TYPE == "futures":
@@ -483,7 +487,7 @@ class SignalEngine:
                 tp = entry + (risk * ratio)
                 take_profits.append(round(tp, 8))
 
-            expected_profit = (take_profits[-1] - entry) / entry * 100
+            expected_profit = (take_profits[-1] - entry) / entry * 100 if entry > 0 else 0
 
         else:  # SHORT
             entry = current_price
@@ -505,6 +509,9 @@ class SignalEngine:
                     stop_loss = max(stop_loss, strongest_wall["price"] * 1.005)
 
             risk = stop_loss - entry
+            if risk <= 0 or entry <= 0:
+                stop_loss = entry * 1.03
+                risk = stop_loss - entry
 
             if SIGNAL_TYPE == "futures":
                 tp_ratios = FUTURES_TP_RATIOS_SHITCOIN if is_shitcoin else FUTURES_TP_RATIOS
@@ -515,9 +522,9 @@ class SignalEngine:
                 tp = entry - (risk * ratio)
                 take_profits.append(round(tp, 8))
 
-            expected_profit = (entry - take_profits[-1]) / entry * 100
+            expected_profit = (entry - take_profits[-1]) / entry * 100 if entry > 0 else 0
 
-        risk_reward = tp_ratios[-1] if 'tp_ratios' in dir() else TP_RATIOS[-1]
+        risk_reward = tp_ratios[-1] if 'tp_ratios' in locals() and tp_ratios else TP_RATIOS[-1]
 
         # محاسبه لیکویید قیمت برای فیوچر
         leverage = FUTURES_LEVERAGE_SHITCOIN if is_shitcoin else FUTURES_LEVERAGE_MAIN

@@ -16,7 +16,7 @@ class OrderFlowAnalyzer:
 
     def __init__(self):
         self.lookback = ORDER_FLOW_LOOKBACK
-        self.delta_threshold = DELTA_THRESHOLD
+        self.delta_threshold = DELTA_THRESHOLD  # 1.3 (پایین آورده شد)
         self.large_vol_mult = LARGE_VOLUME_MULTIPLIER
 
     def analyze_candle_flow(self, candles):
@@ -133,7 +133,7 @@ class OrderFlowAnalyzer:
             "trend": str,
         }
         """
-        if not trades:
+        if not trades or len(trades) < 5:
             return self._empty_trade_result()
 
         buy_volume = 0
@@ -143,12 +143,11 @@ class OrderFlowAnalyzer:
         # محاسبه میانگین حجم برای شناسایی تریدهای بزرگ
         all_volumes = [t["price"] * t["qty"] for t in trades]
         avg_trade = np.mean(all_volumes) if all_volumes else 0
-        large_threshold = avg_trade * 5  # 5 برابر میانگین
+        # کاهش آستانه بزرگ از 5x به 3x میانگین
+        large_threshold = avg_trade * 3
 
         for t in trades:
             notional = t["price"] * t["qty"]
-            # isBuyerMaker=False => خریدار taker => خرید market
-            # isBuyerMaker=True => فروشنده taker بود => فروش market
             if t["isBuyerMaker"]:
                 sell_volume += notional
                 direction = "sell"
@@ -164,45 +163,55 @@ class OrderFlowAnalyzer:
                 })
 
         total = buy_volume + sell_volume
-        delta = buy_volume - sell_volume
-        ratio = buy_volume / sell_volume if sell_volume > 0 else float("inf")
+        if total == 0:
+            return self._empty_trade_result()
 
-        if ratio >= self.delta_threshold:
+        delta = buy_volume - sell_volume
+        # محاسبه نسبت خرید به کل (0-1) - روان‌تر از نسبت مستقیم
+        buy_pct = buy_volume / total
+
+        # آستانه سبک‌تر برای تریدهای اخیر
+        if buy_pct >= 0.60:  # 60% خرید = صعودی
             trend = "bullish"
-        elif ratio <= 1.0 / self.delta_threshold:
+        elif buy_pct <= 0.40:  # 40% خرید = نزولی
             trend = "bearish"
         else:
             trend = "neutral"
+
+        # نسبت برای نمایش (با smoothing)
+        ratio = buy_volume / sell_volume if sell_volume > 0 else 999.0
 
         return {
             "buy_volume": buy_volume,
             "sell_volume": sell_volume,
             "delta": delta,
             "ratio": ratio,
+            "buy_pct": buy_pct,
             "large_trades": large_trades,
             "trend": trend,
         }
 
     def _calculate_score(self, delta_ratio, trend, large_candles, delta_trend):
-        """محاسبه امتیاز 0-100"""
+        """محاسبه امتیاز 0-100 - با وزن بیشتر برای جهت و حجم"""
         score = 50  # پایه
 
-        # امتیاز نسبت دلتا
+        # امتیاز نسبت دلتا (با وزن بیشتر)
         if trend == "bullish":
-            score += min(20, int((delta_ratio - 1) * 10))
+            # delta_ratio >= 1.3, هر چه بالاتر امتیاز بیشتر
+            score += min(25, int((delta_ratio - 1) * 20))
         elif trend == "bearish":
-            score -= min(20, int((1 - 1/delta_ratio) * 10)) if delta_ratio > 0 else 20
+            score -= min(25, int((1 - 1/delta_ratio) * 20)) if delta_ratio > 0 else 25
 
-        # امتیاز کندل‌های حجم بزرگ
+        # امتیاز کندل‌های حجم بزرگ (با وزن بیشتر)
         bull_large = sum(1 for c in large_candles if c["bullish"])
         bear_large = sum(1 for c in large_candles if not c["bullish"])
-        score += (bull_large - bear_large) * 3
+        score += (bull_large - bear_large) * 5
 
         # امتیاز روند دلتا
         if delta_trend == "increasing":
-            score += 10
+            score += 12
         elif delta_trend == "decreasing":
-            score -= 10
+            score -= 12
 
         return max(0, min(100, score))
 
