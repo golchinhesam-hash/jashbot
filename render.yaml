@@ -1,0 +1,16 @@
+# Render.com deployment configuration
+# با این فایل بات روی Render رایگان اجرا می‌شه - نیازی به لپ‌تاپ روشن نیست
+
+services:
+  - type: web
+    name: crypto-signal-bot
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.0
+      - key: WEB_CONCURRENCY
+        value: 1
