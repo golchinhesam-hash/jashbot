@@ -1,0 +1,17 @@
+name: Keep Render Bot Awake
+
+on:
+  schedule:
+    # Run every 5 minutes
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping bot health endpoint
+        run: |
+          echo "Pinging Render service..."
+          curl -sS --max-time 30 -L "https://crypto-signal-bot-8i1q.onrender.com/health" || echo "Ping failed"
+          echo "Done"
