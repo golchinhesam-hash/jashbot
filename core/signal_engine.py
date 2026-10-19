@@ -17,6 +17,17 @@ from config import (
     TP_RATIOS,
     MIN_SIGNAL_SCORE,
     SHITCOIN_SYMBOLS,
+    SIGNAL_TYPE,
+    FUTURES_LEVERAGE_MAIN,
+    FUTURES_LEVERAGE_SHITCOIN,
+    MAX_FUTURES_STOP_PCT_MAIN,
+    MAX_FUTURES_STOP_PCT_SHITCOIN,
+    FUTURES_TP_RATIOS,
+    FUTURES_TP_RATIOS_SHITCOIN,
+    MIN_FUTURES_PROFIT_MAIN,
+    MIN_FUTURES_PROFIT_SHITCOIN,
+    MIN_FUTURES_SCORE_MAIN,
+    MIN_FUTURES_SCORE_SHITCOIN,
 )
 from core.order_flow import OrderFlowAnalyzer
 from core.liquidity import LiquidityScanner
@@ -261,8 +272,11 @@ class SignalEngine:
         else:
             direction = "NEUTRAL"
 
-        # برای شت‌کوین، حداقل امتیاز کمتر
-        min_score = 60 if is_shitcoin else MIN_SIGNAL_SCORE
+        # برای فیوچر، حداقل امتیاز سخت‌گیرانه‌تر (جلوگیری از استاپ/لیکویید)
+        if SIGNAL_TYPE == "futures":
+            min_score = MIN_FUTURES_SCORE_SHITCOIN if is_shitcoin else MIN_FUTURES_SCORE_MAIN
+        else:
+            min_score = 60 if is_shitcoin else MIN_SIGNAL_SCORE
 
         # اگه امتیاز کافی نبود یا جهت خنثی بود
         if direction == "NEUTRAL" or total_score < min_score:
@@ -282,14 +296,18 @@ class SignalEngine:
                 },
             }
 
-        # === محاسبه Entry, SL, TP ===
-        entry, stop_loss, take_profits, rr, expected_profit = self._calculate_levels(
+        # === محاسبه Entry, SL, TP, Leverage ===
+        entry, stop_loss, take_profits, rr, expected_profit, leverage = self._calculate_levels(
             current_price, direction, sr, pools, book_walls, is_shitcoin
         )
 
-        # معیارهای متفاوت برای شت‌کوین
-        min_rr = 1.5 if is_shitcoin else MIN_RISK_REWARD
-        min_profit = MIN_TARGET_PROFIT_SHITCOIN if is_shitcoin else MIN_TARGET_PROFIT
+        # معیارهای متفاوت برای فیوچر vs spot، و شت‌کوین vs اصلی
+        if SIGNAL_TYPE == "futures":
+            min_rr = 2.0  # حداقل R:R برای فیوچر
+            min_profit = MIN_FUTURES_PROFIT_SHITCOIN if is_shitcoin else MIN_FUTURES_PROFIT_MAIN
+        else:
+            min_rr = 1.5 if is_shitcoin else MIN_RISK_REWARD
+            min_profit = MIN_TARGET_PROFIT_SHITCOIN if is_shitcoin else MIN_TARGET_PROFIT
 
         # بررسی معیارها
         if rr < min_rr:
@@ -326,6 +344,7 @@ class SignalEngine:
             "risk_reward": rr,
             "expected_profit_pct": expected_profit,
             "current_price": current_price,
+            "leverage": leverage,
             "reasons": reasons,
             "timestamp": time.time(),
             "analysis": {
@@ -352,11 +371,15 @@ class SignalEngine:
         }
 
     def _calculate_levels(self, current_price, direction, sr, pools, book_walls, is_shitcoin=False):
-        """محاسبه دقیق Entry, Stop Loss, Take Profit"""
+        """محاسبه دقیق Entry, Stop Loss, Take Profit برای سیگنال فیوچر"""
 
-        # برای شت‌کوین، استاپ عریض‌تر و بافر بیشتر
-        max_sl_pct = MAX_STOP_LOSS_PCT * 2 if is_shitcoin else MAX_STOP_LOSS_PCT  # شت‌کوین: 10% استاپ
-        sl_buffer = STOP_LOSS_BUFFER * 2 if is_shitcoin else STOP_LOSS_BUFFER
+        # برای فیوچر: استاپ‌های تighter برای جلوگیری از لیکویید شدن
+        if SIGNAL_TYPE == "futures":
+            max_sl_pct = MAX_FUTURES_STOP_PCT_SHITCOIN if is_shitcoin else MAX_FUTURES_STOP_PCT_MAIN
+            sl_buffer = 1.0  # بافر کمتر برای فیوچر
+        else:
+            max_sl_pct = MAX_STOP_LOSS_PCT * 2 if is_shitcoin else MAX_STOP_LOSS_PCT
+            sl_buffer = STOP_LOSS_BUFFER * 2 if is_shitcoin else STOP_LOSS_BUFFER
 
         nearest_support = sr.get("nearest_support")
         nearest_resistance = sr.get("nearest_resistance")
@@ -385,8 +408,11 @@ class SignalEngine:
             # محاسبه ریسک
             risk = entry - stop_loss
 
-            # Take Profit - برای شت‌کوین اهداف بالاتر
-            tp_ratios = [2.0, 4.0, 7.0] if is_shitcoin else TP_RATIOS
+            # Take Profit - برای فیوچر اهداف بالاتر
+            if SIGNAL_TYPE == "futures":
+                tp_ratios = FUTURES_TP_RATIOS_SHITCOIN if is_shitcoin else FUTURES_TP_RATIOS
+            else:
+                tp_ratios = [2.0, 4.0, 7.0] if is_shitcoin else TP_RATIOS
             take_profits = []
             for ratio in tp_ratios[:TP_LEVELS]:
                 tp = entry + (risk * ratio)
@@ -415,7 +441,10 @@ class SignalEngine:
 
             risk = stop_loss - entry
 
-            tp_ratios = [2.0, 4.0, 7.0] if is_shitcoin else TP_RATIOS
+            if SIGNAL_TYPE == "futures":
+                tp_ratios = FUTURES_TP_RATIOS_SHITCOIN if is_shitcoin else FUTURES_TP_RATIOS
+            else:
+                tp_ratios = [2.0, 4.0, 7.0] if is_shitcoin else TP_RATIOS
             take_profits = []
             for ratio in tp_ratios[:TP_LEVELS]:
                 tp = entry - (risk * ratio)
@@ -423,9 +452,12 @@ class SignalEngine:
 
             expected_profit = (entry - take_profits[-1]) / entry * 100
 
-        risk_reward = TP_RATIOS[-1]  # نسبت نهایی
+        risk_reward = tp_ratios[-1] if 'tp_ratios' in dir() else TP_RATIOS[-1]
 
-        return round(entry, 8), round(stop_loss, 8), take_profits, risk_reward, expected_profit
+        # محاسبه لیکویید قیمت برای فیوچر
+        leverage = FUTURES_LEVERAGE_SHITCOIN if is_shitcoin else FUTURES_LEVERAGE_MAIN
+
+        return round(entry, 8), round(stop_loss, 8), take_profits, risk_reward, expected_profit, leverage
 
     def should_send_signal(self, symbol):
         """بررسی cooldown - جلوگیری از ارسال سیگنال تکراری"""
@@ -441,7 +473,7 @@ class SignalEngine:
         self.signal_history[symbol] = time.time()
 
     def format_signal_message(self, signal):
-        """فرمت‌بندی سیگنال برای ارسال به تلگرام"""
+        """فرمت‌بندی سیگنال فیوچر برای ارسال به تلگرام"""
         if signal.get("direction") == "NEUTRAL":
             return None
 
@@ -456,6 +488,8 @@ class SignalEngine:
         expected_profit = signal.get("expected_profit_pct", 0)
         reasons = signal.get("reasons", [])
         is_shitcoin = signal.get("is_shitcoin", False)
+        leverage = signal.get("leverage", 10)
+        current_price = signal.get("current_price", entry)
 
         # تشخیص تعداد اعشار مناسب
         if entry < 1:
@@ -468,20 +502,33 @@ class SignalEngine:
         emoji = "🟢" if direction == "LONG" else "🔴"
         tag = " 🐕 شت‌کوین" if is_shitcoin else ""
 
+        # درصد فاصله استاپ
+        sl_pct = abs(entry - stop_loss) / entry * 100
+
+        # قیمت لیکویید تقریبی (با اهرم)
+        if direction == "LONG":
+            liq_price = entry * (1 - 1.0 / leverage * 0.95)  # 95% از حاشیه لیکویید
+        else:
+            liq_price = entry * (1 + 1.0 / leverage * 0.95)
+
         msg = f"""
-{emoji} سیگنال {direction} - {base}{tag} {emoji}
+{emoji} سیگنال فیوچر {direction} - {base}{tag} {emoji}
 
 📊 امتیاز: {score:.0f}/100
+⚡ اهرم پیشنهادی: {leverage}x
 💰 ورود: {fmt(entry)}
-🛑 استاپ لاس: {fmt(stop_loss)}"""
+🛑 استاپ لاس: {fmt(stop_loss)} ({sl_pct:.1f}%)
+💀 قیمت لیکویید: {fmt(liq_price)}"""
 
         for i, tp in enumerate(take_profits, 1):
-            msg += f"\n🎯 هدف {i}: {fmt(tp)}"
+            tp_pct = abs(tp - entry) / entry * 100
+            msg += f"\n🎯 هدف {i}: {fmt(tp)} (+{tp_pct:.1f}%)"
 
         msg += f"""
 
 📐 Risk/Reward: {rr:.1f}:1
 📈 سود مورد انتظار: {expected_profit:.1f}%
+💰 سود با اهرم {leverage}x: ~{expected_profit * leverage:.0f}%
 
 📋 دلایل سیگنال:
 """
@@ -490,5 +537,6 @@ class SignalEngine:
 
         msg += f"\n⏰ زمان: {time.strftime('%Y-%m-%d %H:%M', time.localtime(signal.get('timestamp', time.time())))}"
         msg += "\n\n⚠️ **هشدار:** این سیگنال توسط ربات تولید شده و نظر سرمایه‌گذاری نیست. مسئولیت معامله با شماست."
+        msg += "\n🔧 سیگنال فیوچر - حتماً با مدیریت ریسک مناسب وارد شوید."
 
         return msg

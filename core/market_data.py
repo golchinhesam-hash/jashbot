@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-ماژول دریافت داده بازار از Binance API عمومی
+ماژول دریافت داده بازار از Binance API عمومی (data-api.binance.vision)
 شامل: قیمت، کندل، حجم، order book
+
+نکته: api.binance.com روی برخی آی‌پی‌ها (مثل Render Oregon) محدود شده (451).
+از data-api.binance.vision استفاده می‌کنیم که بدون محدودیت جغرافیایی هست.
 """
 
 import requests
@@ -19,6 +22,15 @@ from config import (
 
 logger = logging.getLogger(__name__)
 
+# API fallback list - اولین یکی که کار کنه استفاده می‌شه
+API_BASES = [
+    "https://data-api.binance.vision",   # بدون محدودیت جغرافیایی
+    "https://api.binance.com",            # اصلی (شاید روی بعضی سرورها کار کنه)
+    "https://api1.binance.com",
+    "https://api2.binance.com",
+    "https://api3.binance.com",
+]
+
 
 class MarketData:
     """دریافت داده بازار از Binance"""
@@ -29,10 +41,31 @@ class MarketData:
         self.session.headers.update({
             "User-Agent": "CryptoSignalBot/1.0"
         })
+        self._working_base = None  # اولین base که کار می‌کنه
+
+    def _get_base(self):
+        """اولین API base که جواب بده رو پیدا کن"""
+        if self._working_base:
+            return self._working_base
+
+        for base in API_BASES:
+            try:
+                r = self.session.get(f"{base}/api/v3/ping", timeout=5)
+                if r.status_code == 200:
+                    self._working_base = base
+                    logger.info(f"✅ Binance API فعال: {base}")
+                    return base
+            except:
+                continue
+
+        # fallback به base_url اصلی
+        self._working_base = self.base_url
+        return self._working_base
 
     def _request(self, endpoint, params=None):
         """درخواست به Binance API با retry"""
-        url = f"{self.base_url}{endpoint}"
+        base = self._get_base()
+        url = f"{base}{endpoint}"
         for attempt in range(3):
             try:
                 resp = self.session.get(url, params=params, timeout=15)
@@ -40,6 +73,11 @@ class MarketData:
                 return resp.json()
             except Exception as e:
                 logger.warning(f"تلاش {attempt+1} ناموفق برای {endpoint}: {e}")
+                # اگه 451 یا 403 بود، base رو عوض کن
+                if hasattr(resp, 'status_code') and resp.status_code in (451, 403):
+                    self._working_base = None
+                    base = self._get_base()
+                    url = f"{base}{endpoint}"
                 if attempt < 2:
                     time.sleep(2)
                 else:
@@ -116,6 +154,21 @@ class MarketData:
             main_count = sum(1 for s in symbols if not s["is_shitcoin"])
             shit_count = sum(1 for s in symbols if s["is_shitcoin"])
             logger.info(f"تعداد {len(symbols)} ارز یافت شد ({main_count} اصلی + {shit_count} شت‌کوین)")
+
+            # لاگ کردن ارزهای KCEX که روی Binance موجود نبودن
+            if kcex_set is not None:
+                found_symbols = set(s["symbol"] for s in symbols)
+                # ارزهای KCEX که volume‌شون کم بوده و فیلتر شدن
+                low_volume = set()
+                # ارزهای KCEX که اصلاً تو پاسخ Binance نبودن
+                missing = kcex_set - found_symbols - low_volume
+                # بررسی دقیق: کدوم KCEX نبودن
+                all_binance_symbols = set(item.get("symbol", "") for item in data)
+                not_on_binance = kcex_set - all_binance_symbols
+                if not_on_binance:
+                    missing_list = sorted(not_on_binance)
+                    logger.warning(f"⚠️ {len(not_on_binance)} ارز KCEX روی Binance موجود نیست: {', '.join(missing_list)}")
+
             return symbols
         except Exception as e:
             logger.error(f"خطا در دریافت لیست ارزها: {e}")

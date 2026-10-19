@@ -20,7 +20,8 @@ ADMIN_IDS = []
 
 # ===================== تنظیمات بازار =====================
 # صرافی مورد استفاده (Binance API عمومی - نیاز به کلید ندارد برای داده عمومی)
-BINANCE_BASE_URL = "https://api.binance.com"
+# data-api.binance.vision بدون محدودیت جغرافیایی (api.binance.com روی Render 451 می‌ده)
+BINANCE_BASE_URL = "https://data-api.binance.vision"
 
 # لیست ارزهایی که اسکن میشن (USDT جفت)
 # None = همه ارزهای USDT موجود با حداقل حجم
@@ -29,8 +30,10 @@ SCAN_SYMBOLS = None
 # ===================== فیلتر صرافی KCEX =====================
 # فقط ارزهایی که تو صرافی KCEX موجود هستن اسکن میشن
 # لیست از https://www.kcex.com/markets استخراج شده
+# لیست کامل از https://www.kcex.com/markets استخراج شده (2026-10-19)
+# شامل همه ارزهای KCEX (USDT جفت) - هم Spot هم Futures
 KCEX_SYMBOLS = [
-    # ارزهای اصلی
+    # === ارزهای اصلی ===
     "BTCUSDT",    # Bitcoin
     "ETHUSDT",    # Ethereum
     "BNBUSDT",    # BNB
@@ -39,35 +42,60 @@ KCEX_SYMBOLS = [
     "TRXUSDT",    # Tron
     "ZECUSDT",    # Zcash
     "HYPEUSDT",   # Hyperliquid
+    "XMRUSDT",    # Monero
     "LINKUSDT",   # Chainlink
     "ADAUSDT",    # Cardano
     "NEARUSDT",   # Near Protocol
+    "RAINUSDT",   # Rain
     "XLMUSDT",    # Stellar
     "BCHUSDT",    # Bitcoin Cash
     "LTCUSDT",    # Litecoin
     "UNIUSDT",    # Uniswap
+    "BTWUSDT",    # Bitway
     "AVAXUSDT",   # Avalanche
+    "CCUSDT",     # Canton Network
     "SUIUSDT",    # Sui
-    "DOTUSDT",    # Polkadot
+    "HBARUSDT",   # Hedera
+    "TAOUSDT",    # Bittensor
+    "SHIBUSDT",   # Shiba Inu
+    "CROUSDT",    # Cronos
+    "QNTUSDT",    # Quant
+    "ENAUSDT",    # Ethena
+    "OKBUSDT",    # OKB
     "AAVEUSDT",   # Aave
     "ONDOUSDT",   # Ondo
+    "PUMPUSDT",   # Pump Fun
     "WLDUSDT",    # Worldcoin
-    "ENAUSDT",    # Ethena
-    "QNTUSDT",    # Quant
-    "CROUSDT",    # Cronos
-    "ICPUSDT",    # Internet Computer
-    "ARBUSDT",    # Arbitrum
-    "ETCUSDT",    # Ethereum Classic
-    "TAOUSDT",    # Bittensor
-    "MNTUSDT",    # Mantle
-    "MORPHOUSDT", # Morpho
-    "OKBUSDT",    # OKB
-    "SKYUSDT",    # Sky
+    "DOTUSDT",    # Polkadot
     "ASTERUSDT",  # Aster
     "WLFIUSDT",   # World Liberty Financial
-    # استیبل‌کوین‌ها و طلا (می‌خوایم فیلتر بشن، تو لیست برای مرجع)
-    # "USDCUSDT", "USD1USDT", "USDSUSDT", "GOLDUSDT"
-    # شت‌کوین‌ها و meme coins
+    "MNTUSDT",    # Mantle
+    "PEPEUSDT",   # Pepe
+    "MORPHOUSDT", # Morpho
+    "SKYUSDT",    # Sky
+    "ICPUSDT",    # Internet Computer
+    "MUSDT",      # MemeCore
+    "ARBUSDT",    # Arbitrum
+    "ETCUSDT",    # Ethereum Classic
+    "GRAMUSDT",   # Gram
+    # استیبل‌کوین‌ها و طلا (فیلتر می‌شن - نوسان ندارن)
+    # "USDCUSDT", "USD1USDT", "USDSUSDT", "GOLDUSDT", "XAUTUSDT", "PAXGUSDT"
+]
+
+# اگه True باشه، فقط ارزهای KCEX اسکن میشن
+USE_KCEX_FILTER = True
+
+# حداقل حجم معاملات روزانه برای ارزهای اصلی (به USDT)
+# کاهش از 50M به 10M برای اسکن ارزهای بیشتر KCEX
+MIN_24H_VOLUME = 10_000_000  # 10 میلیون دلار
+
+# حداقل حجم معاملات روزانه برای شت‌کوین‌ها (کمتر = ارزهای فرعی‌تر هم اسکن میشن)
+# کاهش از 5M به 2M برای پوشش بیشتر شت‌کوین‌های KCEX
+MIN_24H_VOLUME_SHITCOIN = 2_000_000  # 2 میلیون دلار
+
+# لیست شت‌کوین‌ها و meme coin‌های معروف که همیشه پایش میشن
+# فقط اونایی که تو KCEX هستن
+SHITCOIN_SYMBOLS = [
     "DOGEUSDT",   # Dogecoin
     "SHIBUSDT",   # Shiba Inu
     "PEPEUSDT",   # Pepe
@@ -77,29 +105,10 @@ KCEX_SYMBOLS = [
     "BTWUSDT",    # Bitway
     "GRAMUSDT",   # Gram
     "CCUSDT",     # Canton Network
-]
-
-# اگه True باشه، فقط ارزهای KCEX اسکن میشن
-USE_KCEX_FILTER = True
-
-# حداقل حجم معاملات روزانه برای ارزهای اصلی (به USDT)
-MIN_24H_VOLUME = 50_000_000  # 50 میلیون دلار
-
-# حداقل حجم معاملات روزانه برای شت‌کوین‌ها (کمتر = ارزهای فرعی‌تر هم اسکن میشن)
-MIN_24H_VOLUME_SHITCOIN = 5_000_000  # 5 میلیون دلار
-
-# لیست شت‌کوین‌ها و meme coin‌های معروف که همیشه پایش میشن
-# فقط اونایی که تو KCEX هستن
-SHITCOIN_SYMBOLS = [
-    "DOGEUSDT",   # Dogecoin ✓ KCEX
-    "SHIBUSDT",   # Shiba Inu ✓ KCEX
-    "PEPEUSDT",   # Pepe ✓ KCEX
-    "PUMPUSDT",   # Pump Fun ✓ KCEX
-    "MUSDT",      # MemeCore ✓ KCEX
-    "RAINUSDT",   # Rain ✓ KCEX
-    "BTWUSDT",    # Bitway ✓ KCEX
-    "GRAMUSDT",   # Gram ✓ KCEX
-    "CCUSDT",     # Canton Network ✓ KCEX
+    "ASTERUSDT",  # Aster
+    "WLFIUSDT",   # World Liberty Financial
+    "SKYUSDT",    # Sky
+    "MORPHOUSDT", # Morpho
 ]
 
 # حداقل حجم ترید نهنگ برای شت‌کوین‌ها (کمتر چون حجم کل کمتره)
@@ -132,6 +141,31 @@ TP_LEVELS = 3  # سه هدف سود
 
 # ضریب‌های هدف سود نسبت به استاپ
 TP_RATIOS = [1.5, 2.5, 4.0]
+
+# ===================== تنظیمات سیگنال فیوچر =====================
+# نوع سیگنال: futures (شامل اهرم، حد لیکوییداسیون، و ریسک‌ها)
+SIGNAL_TYPE = "futures"
+
+# اهرم پیشنهادی (leverage) - بسته به نوسان ارز
+FUTURES_LEVERAGE_MAIN = 10    # ارزهای اصلی (BTC, ETH, etc.)
+FUTURES_LEVERAGE_SHITCOIN = 5  # شت‌کوین‌ها (ریسک بالاتر = اهرم کمتر)
+
+# حداکثر درصد استاپ برای فیوچر (فاصله از نقطه ورود تا استاپ)
+# استاپ‌های تighter برای جلوگیری از لیکویید شدن
+MAX_FUTURES_STOP_PCT_MAIN = 3.0       # 3% برای ارزهای اصلی
+MAX_FUTURES_STOP_PCT_SHITCOIN = 5.0   # 5% برای شت‌کوین‌ها
+
+# ضریب هدف سود برای فیوچر (بالاتر چون اهرم داره)
+FUTURES_TP_RATIOS = [2.0, 4.0, 7.0]  # R:R برای ارزهای اصلی
+FUTURES_TP_RATIOS_SHITCOIN = [3.0, 6.0, 10.0]  # R:R برای شت‌کوین
+
+# حداقل درصد سود برای سیگنال فیوچر
+MIN_FUTURES_PROFIT_MAIN = 10.0      # 10% برای ارزهای اصلی
+MIN_FUTURES_PROFIT_SHITCOIN = 20.0  # 20% برای شت‌کوین
+
+# حداقل امتیاز برای سیگنال فیوچر (سخت‌گیرانه‌تر برای جلوگیری از استاپ)
+MIN_FUTURES_SCORE_MAIN = 75       # 75/100 برای ارزهای اصلی
+MIN_FUTURES_SCORE_SHITCOIN = 65   # 65/100 برای شت‌کوین
 
 # ===================== تنظیمات Order Flow =====================
 # تعداد کندل‌ها برای تحلیل order flow
