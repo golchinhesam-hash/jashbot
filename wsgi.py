@@ -211,6 +211,10 @@ def run_bot():
                     # پردازش دستورات
                     if text.startswith("/start"):
                         handle_start(bot, chat_id, first_name)
+                    elif text.startswith("/adduser"):
+                        handle_adduser(bot, chat_id, text)
+                    elif text.startswith("/users"):
+                        handle_users(bot, chat_id)
                     elif text.startswith("/status"):
                         handle_status(bot, chat_id)
                     elif text.startswith("/scan"):
@@ -252,9 +256,31 @@ def send_message(token, chat_id, text, parse_mode="Markdown"):
         return False
 
 
+def is_authorized(chat_id):
+    """بررسی دسترسی - فقط آیدی‌های مجاز"""
+    import config
+    return chat_id in config.AUTHORIZED_CHAT_IDS
+
+
+def send_unauthorized_message(token, chat_id):
+    """پیام به کاربر غیرمجاز"""
+    msg = (
+        "🔒 **این ربات خصوصی است**\n\n"
+        "شما اجازه استفاده از این ربات را ندارید.\n"
+        "اگر فکر می‌کنید اشتباهی شده، با مدیر تماس بگیرید."
+    )
+    send_message(token, chat_id, msg)
+
+
 def handle_start(bot, chat_id, first_name):
     """پردازش /start"""
     import config
+
+    # بررسی دسترسی
+    if not is_authorized(chat_id):
+        logger.warning(f"کاربر غیرمجاز {first_name} (ID: {chat_id}) تلاش کرد /start بزنه")
+        send_unauthorized_message(config.TELEGRAM_BOT_TOKEN, chat_id)
+        return
 
     bot.chat_id = chat_id
     config.TELEGRAM_CHAT_ID = chat_id
@@ -266,6 +292,7 @@ def handle_start(bot, chat_id, first_name):
     msg = (
         f"🤖 ربات سیگنال کریپتو + Whale Radar\n\n"
         f"سلام {first_name}! چت آیدی شما ثبت شد: `{chat_id}`\n\n"
+        f"🔒 **این ربات خصوصی است** - فقط کاربران مجاز می‌تونن استفاده کنن.\n\n"
         f"من بازار ارزهای دیجیتال رو اسکن می‌کنم و "
         f"سیگنال‌های خرید و فروش با تحلیل زیر ارائه می‌دم:\n\n"
         f"📊 Order Flow - جریان سفارشات\n"
@@ -277,6 +304,7 @@ def handle_start(bot, chat_id, first_name):
         f"/scan - اسکن دستی بازار\n"
         f"/radar - وضعیت Whale Radar لحظه‌ای\n"
         f"/last - آخرین سیگنال‌ها\n"
+        f"/users - لیست کاربران مجاز\n"
         f"/help - راهنما\n\n"
         f"⚡ Whale Radar فعال شد - هشدار نهنگ‌ها رو لحظه‌ای می‌گیری"
     )
@@ -291,6 +319,9 @@ def handle_start(bot, chat_id, first_name):
 def handle_status(bot, chat_id):
     """پردازش /status"""
     import config
+    if not is_authorized(chat_id):
+        send_unauthorized_message(config.TELEGRAM_BOT_TOKEN, chat_id)
+        return
     status = "✅ فعال" if bot.running else "❌ غیرفعال"
     radar_stats = bot.radar.get_stats()
     binance_stats = radar_stats.get("binance", {})
@@ -324,10 +355,9 @@ def handle_status(bot, chat_id):
 def handle_scan(bot, chat_id):
     """پردازش /scan"""
     import config
-    if config.ADMIN_IDS and chat_id not in config.ADMIN_IDS:
-        send_message(config.TELEGRAM_BOT_TOKEN, chat_id, "❌ شما دسترسی ادمین ندارید.")
+    if not is_authorized(chat_id):
+        send_unauthorized_message(config.TELEGRAM_BOT_TOKEN, chat_id)
         return
-
     send_message(config.TELEGRAM_BOT_TOKEN, chat_id, "🔍 شروع اسکن ۳۲۶ ارز... مراحل رو برات می‌فرستم")
 
     def progress_cb(msg):
@@ -355,6 +385,9 @@ def handle_scan(bot, chat_id):
 def handle_radar(bot, chat_id):
     """پردازش /radar"""
     import config
+    if not is_authorized(chat_id):
+        send_unauthorized_message(config.TELEGRAM_BOT_TOKEN, chat_id)
+        return
     stats = bot.radar.get_stats()
     if not bot.radar.running:
         send_message(config.TELEGRAM_BOT_TOKEN, chat_id, "❌ Whale Radar فعال نیست. /start بزنید.")
@@ -436,6 +469,62 @@ def handle_help(bot, chat_id):
         "• استاپ لاس دقیق زیر حمایت/بالای مقاومت\n\n"
         "⚠️ مسئولیت معامله با شماست."
     )
+    send_message(config.TELEGRAM_BOT_TOKEN, chat_id, msg)
+
+
+def handle_adduser(bot, chat_id, text):
+    """اضافه کردن کاربر جدید - فقط برای ادمین اصلی"""
+    import config
+
+    # فقط ادمین اصلی (اولین آیدی) می‌تونه کاربر اضافه کنه
+    if not config.AUTHORIZED_CHAT_IDS or chat_id != config.AUTHORIZED_CHAT_IDS[0]:
+        send_message(config.TELEGRAM_BOT_TOKEN, chat_id,
+            "❌ فقط ادمین اصلی می‌تونه کاربر اضافه کنه.")
+        return
+
+    # فرمت: /adduser 123456789
+    parts = text.split()
+    if len(parts) < 2:
+        send_message(config.TELEGRAM_BOT_TOKEN, chat_id,
+            "❌ فرمت اشتباه.\n"
+            "نحوه استفاده:\n"
+            "`/adduser 123456789`\n\n"
+            "برای گرفتن آیدی: کاربر باید به @userinfobot پیام بده.")
+        return
+
+    try:
+        new_id = int(parts[1])
+    except ValueError:
+        send_message(config.TELEGRAM_BOT_TOKEN, chat_id,
+            "❌ آیدی باید عدد باشه. مثال: `/adduser 123456789`")
+        return
+
+    if new_id in config.AUTHORIZED_CHAT_IDS:
+        send_message(config.TELEGRAM_BOT_TOKEN, chat_id,
+            f"ℹ️ آیدی `{new_id}` قبلاً توی لیست هست.")
+        return
+
+    config.AUTHORIZED_CHAT_IDS.append(new_id)
+    send_message(config.TELEGRAM_BOT_TOKEN, chat_id,
+        f"✅ آیدی `{new_id}` به لیست مجاز اضافه شد.\n\n"
+        f"📋 تعداد کاربران مجاز: {len(config.AUTHORIZED_CHAT_IDS)}")
+    logger.info(f"کاربر جدید اضافه شد: {new_id} توسط ادمین {chat_id}")
+
+
+def handle_users(bot, chat_id):
+    """لیست کاربران مجاز - فقط برای ادمین"""
+    import config
+
+    if not is_authorized(chat_id):
+        send_unauthorized_message(config.TELEGRAM_BOT_TOKEN, chat_id)
+        return
+
+    msg = "👥 **لیست کاربران مجاز:**\n\n"
+    for i, uid in enumerate(config.AUTHORIZED_CHAT_IDS, 1):
+        admin_tag = " (ادمین اصلی)" if i == 1 else ""
+        msg += f"{i}. `{uid}`{admin_tag}\n"
+
+    msg += f"\n📊 تعداد کل: {len(config.AUTHORIZED_CHAT_IDS)}"
     send_message(config.TELEGRAM_BOT_TOKEN, chat_id, msg)
 
 

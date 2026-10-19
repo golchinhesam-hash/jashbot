@@ -15,8 +15,9 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8763890105:AAGbAQgr75
 _chat_id_env = os.environ.get("TELEGRAM_CHAT_ID")
 TELEGRAM_CHAT_ID = int(_chat_id_env) if _chat_id_env else None
 
-# آیدی ادمین‌ها (لیست اعداد)
-ADMIN_IDS = []
+# آیدی ادمین‌ها (لیست اعداد) - فقط این آیدی‌ها می‌تونن از بات استفاده کنن
+# چت آیدی اصلی (تو): 7769330487
+AUTHORIZED_CHAT_IDS = [7769330487]
 
 # ===================== تنظیمات بازار =====================
 # صرافی مورد استفاده (Binance API عمومی - نیاز به کلید ندارد برای داده عمومی)
