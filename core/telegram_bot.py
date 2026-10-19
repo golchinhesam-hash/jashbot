@@ -23,6 +23,7 @@ from telegram.ext import (
 from core.signal_engine import SignalEngine
 from core.market_data import MarketData
 from core.whale_radar import WhaleRadar
+from core.whale_radar_rest import WhaleRadarREST
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,8 @@ class TelegramBot:
     def __init__(self):
         self.market = MarketData()
         self.engine = SignalEngine(self.market)
-        self.radar = WhaleRadar(on_whale_alert=self._on_whale_alert)
+        # روی Render از REST استفاده کن (WebSocket محدوده)
+        self.radar = WhaleRadarREST(on_whale_alert=self._on_whale_alert)
         self.app = Application.builder().token(config.TELEGRAM_BOT_TOKEN).build()
         self.running = False
         self.last_signals = []
