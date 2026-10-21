@@ -35,6 +35,7 @@ from config import (
 from core.order_flow import OrderFlowAnalyzer
 from core.liquidity import LiquidityScanner
 from core.whale_scanner import WhaleScanner
+from core.whale_hunter import WhaleHunter
 
 logger = logging.getLogger(__name__)
 
@@ -511,6 +512,7 @@ class SignalEngine:
         self.order_flow = OrderFlowAnalyzer()
         self.liquidity = LiquidityScanner()
         self.whale = WhaleScanner()
+        self.whale_hunter = WhaleHunter()  # اسکنر پیشرفته نهنگ
         self.signal_history = {}  # symbol -> last_signal_time
 
     def quick_scan(self, symbol, base=None, is_shitcoin=False):
@@ -617,6 +619,18 @@ class SignalEngine:
             order_book = self.market.get_order_book(symbol, 100)
             book_walls = self.liquidity.analyze_order_book_walls(order_book)
 
+            # اسکن پیشرفته نهنگ (Whale Hunter)
+            current_price = candles_1h[-1]["close"]
+            whale_hunter_result = self.whale_hunter.analyze_order_book_for_whales(
+                order_book, current_price, symbol
+            )
+            pump_dump_setup = self.whale_hunter.detect_pump_dump_setup(
+                candles_1h, order_book
+            )
+            whale_zones = self.whale_hunter.find_whale_entry_zones(
+                candles_1h, order_book
+            )
+
             # اسکن نهنگ‌ها
             whale_trades = self.whale.scan_whale_trades(trades) if trades else None
             vol_anomalies = self.whale.scan_volume_anomalies(candles_1h)
@@ -640,6 +654,9 @@ class SignalEngine:
                 vol_anomalies=vol_anomalies,
                 cvd=cvd,
                 of_4h=of_4h,
+                whale_hunter=whale_hunter_result,
+                pump_dump_setup=pump_dump_setup,
+                whale_zones=whale_zones,
                 is_shitcoin=is_shitcoin,
             )
 
@@ -652,6 +669,7 @@ class SignalEngine:
     def _generate_signal(self, symbol, base, candles_1h, candles_15m,
                          of_result, trade_flow, sr, pools, book_walls,
                          whale_trades, vol_anomalies, cvd, of_4h,
+                         whale_hunter=None, pump_dump_setup=None, whale_zones=None,
                          is_shitcoin=False):
         """ترکیب تمام تحلیل‌ها و تولید سیگنال نهایی"""
 
@@ -813,6 +831,41 @@ class SignalEngine:
         kz = ict_result.get("killzone", {})
         if not kz.get("in_killzone", False):
             reasons.append("⚠️ خارج از ICT Killzone - وین ریت پایین‌تر از 95%")
+
+        # === 9. Whale Hunter Analysis (Advanced Whale Detection) ===
+        if whale_hunter:
+            wh_score = whale_hunter.get("score", 50)
+            wh_pressure = whale_hunter.get("whale_pressure", "neutral")
+            scores.append(("WhaleHunter", wh_score))
+            
+            # Whale pressure votes
+            if wh_pressure == "buy":
+                direction_votes["LONG"] += 3
+                reasons.extend(whale_hunter.get("reasons", [])[:2])
+            elif wh_pressure == "sell":
+                direction_votes["SHORT"] += 3
+                reasons.extend(whale_hunter.get("reasons", [])[:2])
+            
+            # Mega wall alerts
+            support = whale_hunter.get("support_wall")
+            resistance = whale_hunter.get("resistance_wall")
+            if support and support.get("level") == "mega":
+                reasons.append(f"🐋 MEGA WALL خرید: ${support['value_usdt']/1e6:.1f}M @ {support['price']:.2f}")
+            if resistance and resistance.get("level") == "mega":
+                reasons.append(f"🐋 MEGA WALL فروش: ${resistance['value_usdt']/1e6:.1f}M @ {resistance['price']:.2f}")
+        
+        # Pump/Dump setup detection
+        if pump_dump_setup:
+            setup_type = pump_dump_setup.get("setup", "none")
+            setup_conf = pump_dump_setup.get("confidence", 0)
+            if setup_type == "pump" and setup_conf >= 40:
+                direction_votes["LONG"] += 3
+                reasons.append(f"🚀 ستاپ پمپ شناسایی شد! (confidence: {setup_conf}%)")
+                reasons.extend(pump_dump_setup.get("reasons", [])[:2])
+            elif setup_type == "dump" and setup_conf >= 40:
+                direction_votes["SHORT"] += 3
+                reasons.append(f"🔻 ستاپ دامپ شناسایی شد! (confidence: {setup_conf}%)")
+                reasons.extend(pump_dump_setup.get("reasons", [])[:2])
 
         # === تصمیم نهایی ===
         total_score = sum(s[1] for s in scores) / len(scores) if scores else 50
@@ -991,6 +1044,9 @@ class SignalEngine:
             "warning_time_short": format_persian_datetime_short(time.time() + (MAX_POSITION_DURATION_HOURS * 3600) - (POSITION_EXPIRY_WARNING_MINUTES * 60)),
             "max_duration_hours": MAX_POSITION_DURATION_HOURS,
             "ict_analysis": ict_result,
+            "whale_hunter": whale_hunter,
+            "pump_dump_setup": pump_dump_setup,
+            "whale_zones": whale_zones,
             "analysis": {
                 "order_flow": {
                     "trend": of_result.get("trend"),
@@ -1237,6 +1293,38 @@ class SignalEngine:
                 if kz.get('ny'): zones.append('NY')
                 if kz.get('ny_close'): zones.append('NY Close')
                 msg += f"  ✓ Killzone: {', '.join(zones)}\n"
+
+        # Whale Hunter details
+        wh = signal.get('whale_hunter', {})
+        if wh:
+            msg += "\n🐋 **Whale Hunter Analysis:**\n"
+            pressure = wh.get('whale_pressure', 'neutral')
+            if pressure == 'buy':
+                msg += "  🟢 فشار خرید نهنگی قوی\n"
+            elif pressure == 'sell':
+                msg += "  🔴 فشار فروش نهنگی قوی\n"
+            
+            support = wh.get('support_wall')
+            if support:
+                msg += f"  📗 دیوار حمایت: ${support['value_usdt']/1e6:.1f}M @ {support['price']:.2f}\n"
+            
+            resistance = wh.get('resistance_wall')
+            if resistance:
+                msg += f"  📕 دیوار مقاومت: ${resistance['value_usdt']/1e6:.1f}M @ {resistance['price']:.2f}\n"
+            
+            liq_zones = wh.get('liquidation_zones', [])
+            for lz in liq_zones[:2]:
+                msg += f"  ⚡ {lz.get('description', '')}\n"
+
+        # Pump/Dump setup
+        pds = signal.get('pump_dump_setup', {})
+        if pds and pds.get('setup') != 'none':
+            setup = pds.get('setup', '')
+            conf = pds.get('confidence', 0)
+            if setup == 'pump':
+                msg += f"\n🚀 **ستاپ پمپ شناسایی شد!** (confidence: {conf}%)\n"
+            elif setup == 'dump':
+                msg += f"\n🔻 **ستاپ دامپ شناسایی شد!** (confidence: {conf}%)\n"
 
         entry_time = signal.get('entry_time', '')
         exit_time = signal.get('exit_time', '')
