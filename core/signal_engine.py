@@ -8,6 +8,8 @@
 import logging
 import time
 from config import (
+    MAX_POSITION_DURATION_HOURS,
+    POSITION_EXPIRY_WARNING_MINUTES,
     MIN_TARGET_PROFIT,
     MIN_TARGET_PROFIT_SHITCOIN,
     MIN_RISK_REWARD,

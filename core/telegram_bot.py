@@ -40,8 +40,100 @@ class TelegramBot:
         self.running = False
         self.last_signals = []
         self.whale_alerts = []  # لیست آخرین هشدارهای نهنگ
+        self.active_positions = []  # پوزیشن‌های فعال با تایمر
         self.chat_id = None
         self._setup_handlers()
+
+    def add_position(self, signal):
+        """اضافه کردن پوزیشن فعال برای ردیابی زمان"""
+        import config
+        position = {
+            'symbol': signal.get('symbol'),
+            'direction': signal.get('direction'),
+            'entry': signal.get('entry'),
+            'entry_time': time.time(),
+            'exit_time': time.time() + (config.MAX_POSITION_DURATION_HOURS * 3600),
+            'warning_time': time.time() + (config.MAX_POSITION_DURATION_HOURS * 3600) - (config.POSITION_EXPIRY_WARNING_MINUTES * 60),
+            'warning_sent': False,
+            'expired': False,
+        }
+        self.active_positions.append(position)
+        logger.info(f"پوزیشن اضافه شد: {position['symbol']} {position['direction']} - خروج: {config.MAX_POSITION_DURATION_HOURS} ساعت")
+
+    def check_position_expiry(self):
+        """چک کردن پوزیشن‌های فعال و ارسال هشدار"""
+        now = time.time()
+        for pos in self.active_positions:
+            if pos['expired']:
+                continue
+            
+            # هشدار 30 دقیقه قبل
+            if not pos['warning_sent'] and now >= pos['warning_time']:
+                pos['warning_sent'] = True
+                self._send_expiry_warning(pos)
+            
+            # زمان تموم شد
+            if now >= pos['exit_time']:
+                pos['expired'] = True
+                self._send_expiry_alert(pos)
+        
+        # پاک کردن پوزیشن‌های expired
+        self.active_positions = [p for p in self.active_positions if not p['expired']]
+
+    def _send_expiry_warning(self, position):
+        """هشدار 30 دقیقه قبل از اتمام زمان"""
+        if not self.chat_id:
+            return
+        msg = (
+            f"⚠️ **هشدار زمان پوزیشن**
+
+"
+            f"{position['symbol']} - {position['direction']}
+"
+            f"ورود: {position['entry']:.4f}
+
+"
+            f"⏰ **30 دقیقه دیگه زمان تموم میشه!**
+"
+            f"🔴 آماده باش برای بستن پوزیشن
+
+"
+            f"💡 یا TP بگیر یا استاپ رو به سود منتقل کن"
+        )
+        try:
+            import asyncio
+            asyncio.create_task(self.app.bot.send_message(self.chat_id, msg, parse_mode='Markdown'))
+        except:
+            pass
+
+    def _send_expiry_alert(self, position):
+        """هشدار اتمام زمان پوزیشن"""
+        if not self.chat_id:
+            return
+        msg = (
+            f"🔴 **زمان پوزیشن تموم شد!**
+
+"
+            f"{position['symbol']} - {position['direction']}
+"
+            f"ورود: {position['entry']:.4f}
+
+"
+            f"⏰ **حداکثر زمان ({config.MAX_POSITION_DURATION_HOURS} ساعت) تموم شد**
+
+"
+            f"⚠️ **پوزیشن رو ببند!**
+"
+            f"حتی اگه ضرری - ریسک نکن
+
+"
+            f"📊 بعدش /scan بزن برای سیگنال جدید"
+        )
+        try:
+            import asyncio
+            asyncio.create_task(self.app.bot.send_message(self.chat_id, msg, parse_mode='Markdown'))
+        except:
+            pass
 
     def _setup_handlers(self):
         """ثبت دستورات"""
