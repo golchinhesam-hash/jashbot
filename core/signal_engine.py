@@ -38,6 +38,8 @@ from core.whale_scanner import WhaleScanner
 
 logger = logging.getLogger(__name__)
 
+import jdatetime
+
 # ===================== توابع کمکی زمان =====================
 
 def get_tehran_time(timestamp=None):
@@ -50,8 +52,11 @@ def get_tehran_time(timestamp=None):
 
 
 def format_persian_time(timestamp=None):
-    """فرمت فارسی زمان تهران"""
+    """فرمت فارسی زمان تهران (شمسی)"""
     dt = get_tehran_time(timestamp)
+    
+    # تبدیل به تاریخ شمسی
+    jalali = jdatetime.date.fromgregorian(date=dt.date())
     
     # نام ماه‌های فارسی
     persian_months = {
@@ -68,9 +73,9 @@ def format_persian_time(timestamp=None):
     }
     
     day_name = persian_days.get(dt.weekday(), "")
-    month_name = persian_months.get(dt.month, "")
+    month_name = persian_months.get(jalali.month, "")
     
-    return f"{day_name} {dt.day} {month_name} - {dt.hour:02d}:{dt.minute:02d}"
+    return f"{day_name} {jalali.day} {month_name} - {dt.hour:02d}:{dt.minute:02d}"
 
 
 def format_persian_datetime_short(timestamp=None):
