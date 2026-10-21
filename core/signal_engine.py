@@ -36,6 +36,7 @@ from core.order_flow import OrderFlowAnalyzer
 from core.liquidity import LiquidityScanner
 from core.whale_scanner import WhaleScanner
 from core.whale_hunter import WhaleHunter
+from core.pre_movement_detector import PreMovementDetector
 
 logger = logging.getLogger(__name__)
 
@@ -512,7 +513,8 @@ class SignalEngine:
         self.order_flow = OrderFlowAnalyzer()
         self.liquidity = LiquidityScanner()
         self.whale = WhaleScanner()
-        self.whale_hunter = WhaleHunter()  # اسکنر پیشرفته نهنگ
+        self.whale_hunter = WhaleHunter()
+        self.pre_movement = PreMovementDetector()  # تشخیص قبل از حرکت
         self.signal_history = {}  # symbol -> last_signal_time
 
     def quick_scan(self, symbol, base=None, is_shitcoin=False):
@@ -631,6 +633,11 @@ class SignalEngine:
                 candles_1h, order_book
             )
 
+            # اسکن قبل از حرکت (Pre-Movement Detection)
+            pre_movement = self.pre_movement.analyze_pre_movement(
+                candles_1h, order_book, current_price
+            )
+
             # اسکن نهنگ‌ها
             whale_trades = self.whale.scan_whale_trades(trades) if trades else None
             vol_anomalies = self.whale.scan_volume_anomalies(candles_1h)
@@ -657,6 +664,7 @@ class SignalEngine:
                 whale_hunter=whale_hunter_result,
                 pump_dump_setup=pump_dump_setup,
                 whale_zones=whale_zones,
+                pre_movement=pre_movement,
                 is_shitcoin=is_shitcoin,
             )
 
@@ -670,6 +678,7 @@ class SignalEngine:
                          of_result, trade_flow, sr, pools, book_walls,
                          whale_trades, vol_anomalies, cvd, of_4h,
                          whale_hunter=None, pump_dump_setup=None, whale_zones=None,
+                         pre_movement=None,
                          is_shitcoin=False):
         """ترکیب تمام تحلیل‌ها و تولید سیگنال نهایی"""
 
@@ -867,6 +876,35 @@ class SignalEngine:
                 reasons.append(f"🔻 ستاپ دامپ شناسایی شد! (confidence: {setup_conf}%)")
                 reasons.extend(pump_dump_setup.get("reasons", [])[:2])
 
+        # === 10. Pre-Movement Detection (قبل از حرکت) ===
+        if pre_movement:
+            pm_conf = pre_movement.get("confidence", 0)
+            pm_dir = pre_movement.get("direction", "NEUTRAL")
+            pm_signals = pre_movement.get("signals_count", 0)
+            
+            if pm_dir != "NEUTRAL" and pm_conf >= 50:
+                scores.append(("PreMovement", pm_conf))
+                
+                if pm_dir == "LONG":
+                    direction_votes["LONG"] += 4
+                    reasons.append(f"⚡ **Pre-Movement LONG** (confidence: {pm_conf}%)")
+                elif pm_dir == "SHORT":
+                    direction_votes["SHORT"] += 4
+                    reasons.append(f"⚡ **Pre-Movement SHORT** (confidence: {pm_conf}%)")
+                
+                # جزئیات
+                reasons.extend(pre_movement.get("reasons", [])[:3])
+                
+                # RSI divergence details
+                rsi_div = pre_movement.get("rsi_divergence", {})
+                if rsi_div.get("type") != "none":
+                    reasons.append(f"   📊 RSI: {rsi_div.get('current_rsi', 0):.1f} | {rsi_div.get('type', '')}")
+                
+                # Volume climax
+                vol_cl = pre_movement.get("volume_climax", {})
+                if vol_cl.get("climax"):
+                    reasons.append(f"   📈 Volume: {vol_cl.get('volume_ratio', 0):.1f}x میانگین")
+
         # === تصمیم نهایی ===
         total_score = sum(s[1] for s in scores) / len(scores) if scores else 50
 
@@ -1047,6 +1085,7 @@ class SignalEngine:
             "whale_hunter": whale_hunter,
             "pump_dump_setup": pump_dump_setup,
             "whale_zones": whale_zones,
+            "pre_movement": pre_movement,
             "analysis": {
                 "order_flow": {
                     "trend": of_result.get("trend"),
@@ -1325,6 +1364,35 @@ class SignalEngine:
                 msg += f"\n🚀 **ستاپ پمپ شناسایی شد!** (confidence: {conf}%)\n"
             elif setup == 'dump':
                 msg += f"\n🔻 **ستاپ دامپ شناسایی شد!** (confidence: {conf}%)\n"
+
+        # Pre-Movement Detection
+        pm = signal.get('pre_movement', {})
+        if pm and pm.get('direction') != 'NEUTRAL':
+            pm_conf = pm.get('confidence', 0)
+            pm_dir = pm.get('direction', '')
+            pm_signals = pm.get('signals_count', 0)
+            
+            msg += f"\n⚡ **Pre-Movement Alert** ({pm_signals} signals, conf: {pm_conf}%)\n"
+            
+            # RSI Divergence
+            rsi_div = pm.get('rsi_divergence', {})
+            if rsi_div.get('type') != 'none':
+                msg += f"   📊 RSI: {rsi_div.get('current_rsi', 0):.1f} | {rsi_div.get('type', '')}\n"
+            
+            # Volume Climax
+            vol_cl = pm.get('volume_climax', {})
+            if vol_cl.get('climax'):
+                msg += f"   📈 Volume: {vol_cl.get('volume_ratio', 0):.1f}x average\n"
+            
+            # Delta Divergence
+            delta_div = pm.get('delta_divergence', {})
+            if delta_div.get('divergence'):
+                msg += f"   💧 Delta Divergence: {delta_div.get('type', '')}\n"
+            
+            # OB Shift
+            ob_shift = pm.get('ob_shift', {})
+            if ob_shift.get('shift'):
+                msg += f"   📚 OB Imbalance: {ob_shift.get('bid_ratio', 0)*100:.0f}% buy\n"
 
         entry_time = signal.get('entry_time', '')
         exit_time = signal.get('exit_time', '')
