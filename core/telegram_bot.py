@@ -24,6 +24,7 @@ from core.signal_engine import SignalEngine
 from core.market_data import MarketData
 from core.whale_radar import WhaleRadar
 from core.whale_radar_rest import WhaleRadarREST
+from core.signal_engine import format_persian_time, format_persian_datetime_short
 
 logger = logging.getLogger(__name__)
 
@@ -47,13 +48,19 @@ class TelegramBot:
     def add_position(self, signal):
         """اضافه کردن پوزیشن فعال برای ردیابی زمان"""
         import config
+        now = time.time()
+        exit_ts = now + (config.MAX_POSITION_DURATION_HOURS * 3600)
+        warning_ts = exit_ts - (config.POSITION_EXPIRY_WARNING_MINUTES * 60)
         position = {
             'symbol': signal.get('symbol'),
             'direction': signal.get('direction'),
             'entry': signal.get('entry'),
-            'entry_time': time.time(),
-            'exit_time': time.time() + (config.MAX_POSITION_DURATION_HOURS * 3600),
-            'warning_time': time.time() + (config.MAX_POSITION_DURATION_HOURS * 3600) - (config.POSITION_EXPIRY_WARNING_MINUTES * 60),
+            'entry_time': now,
+            'exit_time': exit_ts,
+            'warning_time': warning_ts,
+            'entry_persian': format_persian_time(now),
+            'exit_persian': format_persian_time(exit_ts),
+            'warning_persian': format_persian_time(warning_ts),
             'warning_sent': False,
             'expired': False,
         }
@@ -84,6 +91,7 @@ class TelegramBot:
         """هشدار 30 دقیقه قبل از اتمام زمان"""
         if not self.chat_id:
             return
+        exit_short = format_persian_datetime_short(position['exit_time'])
         msg = (
             f"⚠️ **هشدار زمان پوزیشن**
 
@@ -91,6 +99,8 @@ class TelegramBot:
             f"{position['symbol']} - {position['direction']}
 "
             f"ورود: {position['entry']:.4f}
+"
+            f"زمان خروج: {exit_short}
 
 "
             f"⏰ **30 دقیقه دیگه زمان تموم میشه!**
@@ -110,6 +120,8 @@ class TelegramBot:
         """هشدار اتمام زمان پوزیشن"""
         if not self.chat_id:
             return
+        entry_short = format_persian_datetime_short(position['entry_time'])
+        exit_short = format_persian_datetime_short(position['exit_time'])
         msg = (
             f"🔴 **زمان پوزیشن تموم شد!**
 
@@ -117,6 +129,8 @@ class TelegramBot:
             f"{position['symbol']} - {position['direction']}
 "
             f"ورود: {position['entry']:.4f}
+"
+            f"از: {entry_short} تا: {exit_short}
 
 "
             f"⏰ **حداکثر زمان ({config.MAX_POSITION_DURATION_HOURS} ساعت) تموم شد**

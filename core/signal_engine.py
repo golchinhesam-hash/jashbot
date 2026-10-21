@@ -7,6 +7,7 @@
 
 import logging
 import time
+from datetime import datetime, timedelta
 from config import (
     MAX_POSITION_DURATION_HOURS,
     POSITION_EXPIRY_WARNING_MINUTES,
@@ -36,6 +37,64 @@ from core.liquidity import LiquidityScanner
 from core.whale_scanner import WhaleScanner
 
 logger = logging.getLogger(__name__)
+
+# ===================== توابع کمکی زمان =====================
+
+def get_tehran_time(timestamp=None):
+    """تبدیل timestamp به زمان تهران"""
+    if timestamp is None:
+        timestamp = time.time()
+    # تهران UTC+3:30
+    tehran_time = datetime.fromtimestamp(timestamp) + timedelta(hours=3, minutes=30)
+    return tehran_time
+
+
+def format_persian_time(timestamp=None):
+    """فرمت فارسی زمان تهران"""
+    dt = get_tehran_time(timestamp)
+    
+    # نام ماه‌های فارسی
+    persian_months = {
+        1: "فروردین", 2: "اردیبهشت", 3: "خرداد",
+        4: "تیر", 5: "مرداد", 6: "شهریور",
+        7: "مهر", 8: "آبان", 9: "آذر",
+        10: "دی", 11: "بهمن", 12: "اسفند"
+    }
+    
+    # نام روزهای فارسی
+    persian_days = {
+        0: "دوشنبه", 1: "سه‌شنبه", 2: "چهارشنبه",
+        3: "پنج‌شنبه", 4: "جمعه", 5: "شنبه", 6: "یکشنبه"
+    }
+    
+    day_name = persian_days.get(dt.weekday(), "")
+    month_name = persian_months.get(dt.month, "")
+    
+    return f"{day_name} {dt.day} {month_name} - {dt.hour:02d}:{dt.minute:02d}"
+
+
+def format_persian_datetime_short(timestamp=None):
+    """فرمت کوتاه: ساعت:دقیقه"""
+    dt = get_tehran_time(timestamp)
+    return f"{dt.hour:02d}:{dt.minute:02d}"
+
+
+def get_position_times():
+    """محاسبه زمان‌های ورود، هشدار و خروج"""
+    now = time.time()
+    entry_time = now
+    exit_time = now + (MAX_POSITION_DURATION_HOURS * 3600)
+    warning_time = exit_time - (POSITION_EXPIRY_WARNING_MINUTES * 60)
+    
+    return {
+        'entry': format_persian_time(entry_time),
+        'entry_short': format_persian_datetime_short(entry_time),
+        'exit': format_persian_time(exit_time),
+        'exit_short': format_persian_datetime_short(exit_time),
+        'warning': format_persian_time(warning_time),
+        'warning_short': format_persian_datetime_short(warning_time),
+        'duration_hours': MAX_POSITION_DURATION_HOURS,
+    }
 
 
 class SignalEngine:
