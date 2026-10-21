@@ -473,6 +473,13 @@ class SignalEngine:
             "leverage": leverage,
             "reasons": reasons,
             "timestamp": time.time(),
+            "entry_time": format_persian_time(time.time()),
+            "entry_time_short": format_persian_datetime_short(time.time()),
+            "exit_time": format_persian_time(time.time() + MAX_POSITION_DURATION_HOURS * 3600),
+            "exit_time_short": format_persian_datetime_short(time.time() + MAX_POSITION_DURATION_HOURS * 3600),
+            "warning_time": format_persian_time(time.time() + (MAX_POSITION_DURATION_HOURS * 3600) - (POSITION_EXPIRY_WARNING_MINUTES * 60)),
+            "warning_time_short": format_persian_datetime_short(time.time() + (MAX_POSITION_DURATION_HOURS * 3600) - (POSITION_EXPIRY_WARNING_MINUTES * 60)),
+            "max_duration_hours": MAX_POSITION_DURATION_HOURS,
             "analysis": {
                 "order_flow": {
                     "trend": of_result.get("trend"),
