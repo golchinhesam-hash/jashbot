@@ -575,26 +575,44 @@ class TelegramBot:
         self._send_to_channel(msg)
 
     def _send_to_channel(self, message):
-        """ارسال پیام به تلگرام"""
+        """ارسال پیام به کانال و چت خصوصی"""
+        import requests
+        
+        # 1. ارسال به کانال (اگه تنظیم شده)
+        channel_id = config.TELEGRAM_CHANNEL_ID
+        if channel_id:
+            try:
+                url = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendMessage"
+                data = {
+                    "chat_id": channel_id,
+                    "text": message,
+                    "parse_mode": "Markdown",
+                }
+                resp = requests.post(url, data=data, timeout=15)
+                if resp.status_code == 200:
+                    logger.info(f"سیگنال به کانال {channel_id} ارسال شد")
+                else:
+                    logger.error(f"خطا در ارسال به کانال: {resp.text}")
+            except Exception as e:
+                logger.error(f"خطا در ارسال به کانال: {e}")
+        
+        # 2. ارسال به چت خصوصی (backup)
         chat_id = self.chat_id or config.TELEGRAM_CHAT_ID
-        if not chat_id:
-            logger.warning("چت آیدی تنظیم نشده. ابتدا /start بزنید.")
-            return
-        try:
-            import requests
-            url = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendMessage"
-            data = {
-                "chat_id": chat_id,
-                "text": message,
-                "parse_mode": "Markdown",
-            }
-            resp = requests.post(url, data=data, timeout=15)
-            if resp.status_code == 200:
-                logger.info("سیگنال ارسال شد")
-            else:
-                logger.error(f"خطا در ارسال: {resp.text}")
-        except Exception as e:
-            logger.error(f"خطا در ارسال تلگرام: {e}")
+        if chat_id:
+            try:
+                url = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendMessage"
+                data = {
+                    "chat_id": chat_id,
+                    "text": message,
+                    "parse_mode": "Markdown",
+                }
+                resp = requests.post(url, data=data, timeout=15)
+                if resp.status_code == 200:
+                    logger.info("سیگنال به چت خصوصی ارسال شد")
+                else:
+                    logger.error(f"خطا در ارسال به چت: {resp.text}")
+            except Exception as e:
+                logger.error(f"خطا در ارسال تلگرام: {e}")
 
     def start_scanner_loop(self):
         """شروع حلقه اسکن خودکار"""
