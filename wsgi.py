@@ -161,22 +161,22 @@ def run_bot():
             if not bot.radar.running:
                 bot.radar.start()
 
-        # شروع تایمر چک کردن پوزیشن‌ها
-        def position_timer():
-            """هر ۵ دقیقه پوزیشن‌ها رو چک کن"""
-            while True:
-                time.sleep(300)  # 5 دقیقه
-                try:
-                    if bot and hasattr(bot, 'check_position_expiry'):
-                        bot.check_position_expiry()
-                except Exception as e:
-                    logger.debug(f"خطا در چک کردن پوزیشن: {e}")
-        
-        timer_thread = threading.Thread(target=position_timer, daemon=True)
-        timer_thread.start()
-        logger.info("⏰ تایمر پوزیشن‌ها شروع شد - هر 5 دقیقه چک می‌کنه")
-
         logger.info("🚀 بات روی سرور شروع شد - 24/7 فعال")
+
+        # ===================== Position Expiry Checker =====================
+        def position_checker_loop():
+            """چک کردن دوره‌ای پوزیشن‌ها برای هشدار زمان"""
+            while True:
+                try:
+                    if _bot_instance and hasattr(_bot_instance, 'check_position_expiry'):
+                        _bot_instance.check_position_expiry()
+                except Exception as e:
+                    logger.error(f"خطا در position checker: {e}")
+                time.sleep(300)  # هر 5 دقیقه
+
+        checker_thread = threading.Thread(target=position_checker_loop, daemon=True)
+        checker_thread.start()
+        logger.info("⏰ Position expiry checker شروع شد - هر 5 دقیقه")
 
         # ===================== Polling Loop =====================
         # مستقیم با Telegram API — بدون asyncio

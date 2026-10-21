@@ -675,8 +675,21 @@ class SignalEngine:
         for r in reasons:
             msg += f"  • {r}\n"
 
-        msg += f"\n⏰ زمان: {time.strftime('%Y-%m-%d %H:%M', time.localtime(signal.get('timestamp', time.time())))}"
-        msg += "\n\n⚠️ **هشدار:** این سیگنال توسط ربات تولید شده و نظر سرمایه‌گذاری نیست. مسئولیت معامله با شماست."
+        entry_time = signal.get('entry_time', '')
+        exit_time = signal.get('exit_time', '')
+        warning_time = signal.get('warning_time', '')
+        max_hours = signal.get('max_duration_hours', 4)
+
+        msg += f"""
+
+⏰ زمان‌بندی پوزیشن (تهران):
+🟢 ورود: {entry_time}
+🔴 خروج (حداکثر): {exit_time}
+⚠️ هشدار: {warning_time}
+
+💡 مدت باز بودن: {max_hours} ساعت
+"""
+        msg += "\n⚠️ **هشدار:** این سیگنال توسط ربات تولید شده و نظر سرمایه‌گذاری نیست. مسئولیت معامله با شماست."
         msg += "\n🔧 سیگنال فیوچر - حتماً با مدیریت ریسک مناسب وارد شوید."
 
         return msg

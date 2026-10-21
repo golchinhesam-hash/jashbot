@@ -47,7 +47,6 @@ class TelegramBot:
 
     def add_position(self, signal):
         """اضافه کردن پوزیشن فعال برای ردیابی زمان"""
-        import config
         now = time.time()
         exit_ts = now + (config.MAX_POSITION_DURATION_HOURS * 3600)
         warning_ts = exit_ts - (config.POSITION_EXPIRY_WARNING_MINUTES * 60)
@@ -73,18 +72,12 @@ class TelegramBot:
         for pos in self.active_positions:
             if pos['expired']:
                 continue
-            
-            # هشدار 30 دقیقه قبل
             if not pos['warning_sent'] and now >= pos['warning_time']:
                 pos['warning_sent'] = True
                 self._send_expiry_warning(pos)
-            
-            # زمان تموم شد
             if now >= pos['exit_time']:
                 pos['expired'] = True
                 self._send_expiry_alert(pos)
-        
-        # پاک کردن پوزیشن‌های expired
         self.active_positions = [p for p in self.active_positions if not p['expired']]
 
     def _send_expiry_warning(self, position):
@@ -92,24 +85,19 @@ class TelegramBot:
         if not self.chat_id:
             return
         exit_short = format_persian_datetime_short(position['exit_time'])
-        msg = (
-            f"⚠️ **هشدار زمان پوزیشن**
-
-"
-            f"{position['symbol']} - {position['direction']}
-"
-            f"ورود: {position['entry']:.4f}
-"
-            f"زمان خروج: {exit_short}
-
-"
-            f"⏰ **30 دقیقه دیگه زمان تموم میشه!**
-"
-            f"🔴 آماده باش برای بستن پوزیشن
-
-"
-            f"💡 یا TP بگیر یا استاپ رو به سود منتقل کن"
-        )
+        lines = [
+            '⚠️ **هشدار زمان پوزیشن**',
+            '',
+            f"{position['symbol']} - {position['direction']}",
+            f"ورود: {position['entry']:.4f}",
+            f"زمان خروج: {exit_short}",
+            '',
+            '⏰ **30 دقیقه دیگه زمان تموم میشه!**',
+            '🔴 آماده باش برای بستن پوزیشن',
+            '',
+            '💡 یا TP بگیر یا استاپ رو به سود منتقل کن',
+        ]
+        msg = '\n'.join(lines)
         try:
             import asyncio
             asyncio.create_task(self.app.bot.send_message(self.chat_id, msg, parse_mode='Markdown'))
@@ -122,27 +110,22 @@ class TelegramBot:
             return
         entry_short = format_persian_datetime_short(position['entry_time'])
         exit_short = format_persian_datetime_short(position['exit_time'])
-        msg = (
-            f"🔴 **زمان پوزیشن تموم شد!**
-
-"
-            f"{position['symbol']} - {position['direction']}
-"
-            f"ورود: {position['entry']:.4f}
-"
-            f"از: {entry_short} تا: {exit_short}
-
-"
-            f"⏰ **حداکثر زمان ({config.MAX_POSITION_DURATION_HOURS} ساعت) تموم شد**
-
-"
-            f"⚠️ **پوزیشن رو ببند!**
-"
-            f"حتی اگه ضرری - ریسک نکن
-
-"
-            f"📊 بعدش /scan بزن برای سیگنال جدید"
-        )
+        hours = config.MAX_POSITION_DURATION_HOURS
+        lines = [
+            '🔴 **زمان پوزیشن تموم شد!**',
+            '',
+            f"{position['symbol']} - {position['direction']}",
+            f"ورود: {position['entry']:.4f}",
+            f"از: {entry_short} تا: {exit_short}",
+            '',
+            f"⏰ **حداکثر زمان ({hours} ساعت) تموم شد**",
+            '',
+            '⚠️ **پوزیشن رو ببند!**',
+            'حتی اگه ضرری - ریسک نکن',
+            '',
+            '📊 بعدش /scan بزن برای سیگنال جدید',
+        ]
+        msg = '\n'.join(lines)
         try:
             import asyncio
             asyncio.create_task(self.app.bot.send_message(self.chat_id, msg, parse_mode='Markdown'))
@@ -293,6 +276,7 @@ class TelegramBot:
                             text=msg,
                             parse_mode="Markdown"
                         )
+                        self.add_position(signal)
             else:
                 context.bot.send_message(
                     chat_id=chat_id,
@@ -440,6 +424,7 @@ class TelegramBot:
                     msg = self.engine.format_signal_message(signal)
                     if msg:
                         self._send_to_channel(msg)
+                        self.add_position(signal)
                 elif signal and signal.get("score", 0) >= 50:
                     # نگه داشتن ارزهای امتیاز بالا ولی خنثی برای watch list
                     neutral_picks.append(signal)
