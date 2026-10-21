@@ -42,6 +42,8 @@ class TelegramBot:
         self.last_signals = []
         self.whale_alerts = []  # لیست آخرین هشدارهای نهنگ
         self.active_positions = []  # پوزیشن‌های فعال با تایمر
+        self.daily_loss = 0.0  # ضرف روزانه (USDT)
+        self.daily_loss_date = time.strftime('%Y-%m-%d')  # تاریخ امروز
         self.chat_id = None
         self._setup_handlers()
 
@@ -132,6 +134,34 @@ class TelegramBot:
         except:
             pass
 
+    def check_daily_loss_limit(self):
+        """چک کردن محدودیت ضرر روزانه"""
+        # ریست کردن برای روز جدید
+        today = time.strftime('%Y-%m-%d')
+        if today != self.daily_loss_date:
+            self.daily_loss = 0.0
+            self.daily_loss_date = today
+            return True, 0.0
+        
+        # چک کردن حداکثر ضرر
+        max_loss = getattr(config, 'MAX_DAILY_LOSS_PCT', 10.0)
+        # فرض می‌کنیم سرمایه 500$ (می‌تونه قابل تنظیم باشه)
+        account_size = 500.0
+        max_loss_usdt = account_size * max_loss / 100
+        
+        if self.daily_loss >= max_loss_usdt:
+            return False, self.daily_loss
+        return True, self.daily_loss
+
+    def record_loss(self, amount):
+        """ثبت ضرر"""
+        today = time.strftime('%Y-%m-%d')
+        if today != self.daily_loss_date:
+            self.daily_loss = 0.0
+            self.daily_loss_date = today
+        self.daily_loss += amount
+        logger.warning(f"ضرر ثبت شد: ${amount:.2f} | مجموع روزانه: ${self.daily_loss:.2f}")
+
     def _setup_handlers(self):
         """ثبت دستورات"""
         self.app.add_handler(CommandHandler("start", self.cmd_start))
@@ -139,6 +169,7 @@ class TelegramBot:
         self.app.add_handler(CommandHandler("scan", self.cmd_scan))
         self.app.add_handler(CommandHandler("radar", self.cmd_radar))
         self.app.add_handler(CommandHandler("last", self.cmd_last))
+        self.app.add_handler(CommandHandler("loss", self.cmd_loss))
         self.app.add_handler(CommandHandler("help", self.cmd_help))
 
     async def cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -266,6 +297,19 @@ class TelegramBot:
 
         # اجرای اسکن در thread جدا
         def do_scan():
+            # چک محدودیت ضرر روزانه
+            ok, total = self.check_daily_loss_limit()
+            if not ok:
+                context.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"🛑 **اسکن متوقف شد**\n\n"
+                         f"📉 ضرر روزانه: ${total:.2f}\n"
+                         f"⚠️ حداکثر مجاز رد شده!\n\n"
+                         f"💡 امروز دیگه معامله نکن. فردا برگرد.",
+                    parse_mode="Markdown"
+                )
+                return
+            
             found = self.run_market_scan()
             if found:
                 for signal in found:
@@ -305,6 +349,58 @@ class TelegramBot:
 
         await update.message.reply_text(msg, parse_mode="Markdown")
 
+    async def cmd_loss(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """دستور /loss - ثبت ضرر یا چک کردن محدودیت"""
+        chat_id = update.effective_chat.id
+        
+        # چک کردن آیا کاربر مقداری وارد کرده
+        args = context.args
+        if args:
+            try:
+                amount = float(args[0])
+                self.record_loss(abs(amount))
+                ok, total = self.check_daily_loss_limit()
+                
+                if not ok:
+                    msg = (
+                        f"🔴 **ضرر ثبت شد: ${amount:.2f}**\n\n"
+                        f"⚠️ **حداکثر ضرر روزانه رد شد!**\n"
+                        f"📉 مجموع ضرر امروز: ${total:.2f}\n\n"
+                        f"🛑 **امروز دیگه معامله نکن!**\n"
+                        f"💡 استراحت کن و فردا برگرد."
+                    )
+                else:
+                    remaining = 50.0 - total  # فرض سرمایه 500$
+                    msg = (
+                        f"🔴 **ضرر ثبت شد: ${amount:.2f}**\n\n"
+                        f"📉 مجموع ضرر امروز: ${total:.2f}\n"
+                        f"💰 باقیمانده مجاز: ${remaining:.2f}\n\n"
+                        f"⚠️ مراقب باش - اگه به $50 برسیم استاپ می‌زنیم!"
+                    )
+                await update.message.reply_text(msg, parse_mode="Markdown")
+                return
+            except ValueError:
+                pass
+        
+        # فقط نمایش وضعیت
+        ok, total = self.check_daily_loss_limit()
+        remaining = 50.0 - total
+        
+        msg = (
+            f"📊 **وضعیت ضرر روزانه**\n\n"
+            f"📉 ضرر امروز: ${total:.2f}\n"
+            f"💰 باقیمانده مجاز: ${remaining:.2f}\n"
+            f"🎯 حداکثر مجاز: $50.00 (10% از 500$)\n\n"
+        )
+        
+        if not ok:
+            msg += "🔴 **امروز دیگه معامله نکن! حد رد شده.**"
+        else:
+            msg += "🟢 **هنوز تو محدوده مجازی.**\n\n"
+            msg += "برای ثبت ضرر: `/loss 23.5`"
+        
+        await update.message.reply_text(msg, parse_mode="Markdown")
+
     async def cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """دستور /help"""
         msg = (
@@ -314,16 +410,12 @@ class TelegramBot:
             "/status - وضعیت فعلی\n"
             "/scan - اسکن دستی بازار\n"
             "/last - آخرین سیگنال‌ها\n"
+            "/loss - ثبت ضرر / چک محدودیت\n"
             "/help - این راهنما\n\n"
-            "**روش تحلیل:**\n"
-            "این ربات ارزهای USDT رو بر اساس 3 معیار تحلیل می‌کنه:\n\n"
-            "1️⃣ **Order Flow:** جریان خرید و فروش\n"
-            "2️⃣ **Liquidity:** حمایت/مقاومت و استخر نقدینگی\n"
-            "3️⃣ **Whale Activity:** فعالیت نهنگ‌ها و CVD\n\n"
-            "**معیار سیگنال:**\n"
-            "• حداقل 10% سود مورد انتظار\n"
-            "• حداقل 2:1 Risk/Reward\n"
-            "• استاپ لاس دقیق زیر حمایت/بالای مقاومت\n\n"
+            "**ریسک منیجمنت:**\n"
+            "• حداکثر 2% ریسک هر پوزیشن\n"
+            "• حداکثر 10% ضرر روزانه\n"
+            "• شت‌کوین = اهرم 3x (نه بیشتر!)\n\n"
             "⚠️ مسئولیت معامله با شماست."
         )
         await update.message.reply_text(msg, parse_mode="Markdown")
@@ -412,6 +504,12 @@ class TelegramBot:
                 signal = self.engine.scan_symbol(symbol, base, is_shitcoin=is_shitcoin)
 
                 if signal and signal.get("direction") != "NEUTRAL":
+                    # چک محدودیت ضرر روزانه قبل از ارسال
+                    ok, total = self.check_daily_loss_limit()
+                    if not ok:
+                        logger.warning(f"ضرر روزانه رد شده (${total:.2f}) - سیگنال {symbol} ارسال نشد")
+                        break  # از loop بیا بیرون
+                    
                     found_signals.append(signal)
                     self.engine.mark_signal_sent(symbol)
                     self.last_signals.append(signal)

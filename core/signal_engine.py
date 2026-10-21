@@ -892,6 +892,45 @@ class SignalEngine:
                     "ict": ict_result,
                 },
             }
+        
+        # === FOMO Prevention ===
+        # Don't enter after a huge candle (chasing = getting rekt)
+        last_candle = candles_1h[-1]
+        prev_candle = candles_1h[-2]
+        last_body_pct = abs(last_candle["close"] - last_candle["open"]) / last_candle["open"] * 100
+        prev_body_pct = abs(prev_candle["close"] - prev_candle["open"]) / prev_candle["open"] * 100
+        
+        # For LONG: don't enter after huge green candle
+        if direction == "LONG":
+            last_green = last_candle["close"] > last_candle["open"]
+            if last_green and last_body_pct > (5.0 if is_shitcoin else 3.0):
+                reasons.append(f"سیگنال رد شد: کندل قبلی خیلی بزرگ بود ({last_body_pct:.1f}%) - FOMO!")
+                reasons.append("💡 صبر کن برای پولبک، الان ورود = استاپ خوردن")
+                return {
+                    "symbol": symbol,
+                    "base": base or symbol,
+                    "direction": "NEUTRAL",
+                    "score": total_score,
+                    "reasons": reasons,
+                    "is_shitcoin": is_shitcoin,
+                    "analysis": {"fomo": True, "last_candle_body": last_body_pct},
+                }
+        
+        # For SHORT: don't enter after huge red candle
+        if direction == "SHORT":
+            last_red = last_candle["close"] < last_candle["open"]
+            if last_red and last_body_pct > (5.0 if is_shitcoin else 3.0):
+                reasons.append(f"سیگنال رد شد: کندل قبلی خیلی بزرگ بود ({last_body_pct:.1f}%) - FOMO!")
+                reasons.append("💡 صبر کن برای پولبک، الان ورود = استاپ خوردن")
+                return {
+                    "symbol": symbol,
+                    "base": base or symbol,
+                    "direction": "NEUTRAL",
+                    "score": total_score,
+                    "reasons": reasons,
+                    "is_shitcoin": is_shitcoin,
+                    "analysis": {"fomo": True, "last_candle_body": last_body_pct},
+                }
 
         # === محاسبه Entry, SL, TP, Leverage ===
         entry, stop_loss, take_profits, rr, expected_profit, leverage = self._calculate_levels(
@@ -1116,21 +1155,42 @@ class SignalEngine:
 
         # درصد فاصله استاپ
         sl_pct = abs(entry - stop_loss) / entry * 100
+        
+        # محاسبه ریسک واقعی با اهرم
+        risk_with_leverage = sl_pct * leverage
+        
+        # سایز پوزیشن بر اساس 2% رول
+        # Risk = 2% of account / stop loss %
+        position_size_1000 = (1000 * 0.02) / (sl_pct / 100) if sl_pct > 0 else 0
+        position_size_500 = (500 * 0.02) / (sl_pct / 100) if sl_pct > 0 else 0
+        position_size_100 = (100 * 0.02) / (sl_pct / 100) if sl_pct > 0 else 0
 
         # قیمت لیکویید تقریبی (با اهرم)
         if direction == "LONG":
-            liq_price = entry * (1 - 1.0 / leverage * 0.95)  # 95% از حاشیه لیکویید
+            liq_price = entry * (1 - 1.0 / leverage * 0.95)
         else:
             liq_price = entry * (1 + 1.0 / leverage * 0.95)
 
         msg = f"""
-{emoji} سیگنال فیوچر {direction} - {base}{tag} {emoji}
+{emoji} سیگنال فیوچر {direction} - {base}{tag} {emoji}"""
+
+        # شت‌کوین warning
+        if is_shitcoin:
+            msg += """
+
+🚨 **هشدار شت‌کوین** 🚨
+⚠️ این ارز نوسان خیلی بالایی داره!
+⚠️ فقط با پولی وارد شو که توانایی از دست دادنش رو داری
+⚠️ هرگز اهرم بالاتر از توصیه شده استفاده نکن!"""
+
+        msg += f"""
 
 📊 امتیاز: {score:.0f}/100
-⚡ اهرم پیشنهادی: {leverage}x
+⚡ اهرم توصیه شده: **{leverage}x** (بیشتر نزن!)
 💰 ورود: {fmt(entry)}
 🛑 استاپ لاس: {fmt(stop_loss)} ({sl_pct:.1f}%)
-💀 قیمت لیکویید: {fmt(liq_price)}"""
+💀 قیمت لیکویید: {fmt(liq_price)}
+📉 ریسک با اهرم: {risk_with_leverage:.0f}%"""
 
         for i, tp in enumerate(take_profits, 1):
             tp_pct = abs(tp - entry) / entry * 100
@@ -1141,6 +1201,11 @@ class SignalEngine:
 📐 Risk/Reward: {rr:.1f}:1
 📈 سود مورد انتظار: {expected_profit:.1f}%
 💰 سود با اهرم {leverage}x: ~{expected_profit * leverage:.0f}%
+
+💵 **سایز پوزیشن (ریسک 2%):**
+💰 اگه سرمایه‌ت $1000 → پوزیشن: ${position_size_1000:.0f}
+💰 اگه سرمایه‌ت $500 → پوزیشن: ${position_size_500:.0f}
+💰 اگه سرمایه‌ت $100 → پوزیشن: ${position_size_100:.0f}
 
 📊 ICT Strategy (Michael Huddleston):
 🎯 وین ریت هدف: 95%+

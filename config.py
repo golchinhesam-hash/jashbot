@@ -194,34 +194,33 @@ SIGNAL_TYPE = "futures"
 
 # اهرم پیشنهادی (leverage) - بسته به نوسان ارز
 FUTURES_LEVERAGE_MAIN = 10    # ارزهای اصلی (BTC, ETH, etc.)
-FUTURES_LEVERAGE_SHITCOIN = 5  # شت‌کوین‌ها (ریسک بالاتر = اهرم کمتر)
+FUTURES_LEVERAGE_SHITCOIN = 3  # شت‌کوین‌ها = اهرم کمتر (ریسک خیلی بالاست)
 
-# حداکثر درصد استاپ برای فیوچر (فاصله از نقطه ورود تا استاپ)
-# برای ICT: استاپ‌های منطقی‌تر برای RR بالا
-MAX_FUTURES_STOP_PCT_MAIN = 6.0       # 6% برای RR بالاتر
-MAX_FUTURES_STOP_PCT_SHITCOIN = 8.0   # 8% برای شت‌کوین
+# حداکثر درصد استاپ برای فیوچر
+MAX_FUTURES_STOP_PCT_MAIN = 5.0       # 5% برای ارزهای اصلی
+MAX_FUTURES_STOP_PCT_SHITCOIN = 5.0   # 5% برای شت‌کوین هم (با 3x = 15% max loss)
 
-# TP Ratios برای ICT (بسیار بالا برای سودهای بزرگ)
-FUTURES_TP_RATIOS = [10.0, 20.0, 30.0]  # RR = 10, 20, 30
-FUTURES_TP_RATIOS_SHITCOIN = [12.0, 24.0, 36.0]
+# TP Ratios
+FUTURES_TP_RATIOS = [5.0, 10.0, 15.0]  # RR برای ارزهای اصلی
+FUTURES_TP_RATIOS_SHITCOIN = [4.0, 8.0, 12.0]  # RR کمتر برای شت‌کوین
 
-# حداقل درصد سود برای سیگنال فیوچر (قبل از اهرم)
-MIN_FUTURES_PROFIT_MAIN = 5.0       # 5% برای ارزهای اصلی
-MIN_FUTURES_PROFIT_SHITCOIN = 8.0   # 8% برای شت‌کوین
+# ===================== Risk Management =====================
+# حداکثر ضرر روزانه (به درصد سرمایه)
+MAX_DAILY_LOSS_PCT = 10.0  # 10% سرمایه = استاپ تریدینگ
 
-# حداقل امتیاز برای سیگنال فیوچر
-MIN_FUTURES_SCORE_MAIN = 45       # 45/100 برای ارزهای اصلی
-MIN_FUTURES_SCORE_SHITCOIN = 40
+# حداکثر ریسک هر پوزیشن (به درصد سرمایه)
+MAX_RISK_PER_POSITION_PCT = 2.0  # 2% سرمایه برای هر پوزیشن
+
+# حداکثر تعداد پوزیشن همزمان
+MAX_OPEN_POSITIONS = 3
 
 # ===================== تنظیمات ICT (Inner Circle Trader) =====================
-# استراتژی Michael Huddleston برای وین ریت بالا
+# حداقل سود واقعی قبل از اهرم
+MIN_FUTURES_PROFIT_MAIN = 10.0      # 10% واقعی
+MIN_FUTURES_PROFIT_SHITCOIN = 12.0  # 12% واقعی
 
-# حداقل سود واقعی قبل از اهرم (TP1 باید حداقل اینقدر باشه)
-MIN_FUTURES_PROFIT_MAIN = 15.0      # 15% واقعی = 150% با اهرم 10x
-MIN_FUTURES_PROFIT_SHITCOIN = 20.0  # 20% واقعی = 200% با اهرم 10x
-
-# حداقل امتیاز ICT (برای وین ریت بالا)
-MIN_FUTURES_SCORE_MAIN = 50       # 50/100 - ICT validation الزامی
+# حداقل امتیاز ICT
+MIN_FUTURES_SCORE_MAIN = 50       # 50/100
 MIN_FUTURES_SCORE_SHITCOIN = 45   # 45/100
 
 # فقط تایم‌فریم‌های ICT
