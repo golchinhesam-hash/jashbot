@@ -20,9 +20,8 @@ TELEGRAM_CHAT_ID = int(_chat_id_env) if _chat_id_env else None
 AUTHORIZED_CHAT_IDS = [7769330487, 8328717485]
 
 # آیدی کانال برای انتشار سیگنال‌ها
-# کانال باید Public باشه یا بات admin باشه
-# مثال: @mychannel  →  -1001234567890
-TELEGRAM_CHANNEL_ID = os.environ.get("TELEGRAM_CHANNEL_ID", "")
+# کانال JASHUVA: @jashbotmb705
+TELEGRAM_CHANNEL_ID = os.environ.get("TELEGRAM_CHANNEL_ID", "-1004299198991")
 
 # ===================== تنظیمات بازار =====================
 # صرافی مورد استفاده (Binance API عمومی - نیاز به کلید ندارد برای داده عمومی)
