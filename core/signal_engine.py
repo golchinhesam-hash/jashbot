@@ -43,12 +43,413 @@ import jdatetime
 # ===================== توابع کمکی زمان =====================
 
 def get_tehran_time(timestamp=None):
-    """تبدیل timestamp به زمان تهران"""
+    """تبدیل timestamp به زمان تهران (UTC+3:30)"""
     if timestamp is None:
-        timestamp = time.time()
-    # تهران UTC+3:30
-    tehran_time = datetime.fromtimestamp(timestamp) + timedelta(hours=3, minutes=30)
+        # همیشه UTC رو بگیر و 3:30 اضافه کن (حتی روی سرورهای مختلف)
+        utc_now = datetime.utcnow()
+        tehran_time = utc_now + timedelta(hours=3, minutes=30)
+    else:
+        # از timestamp: ابتدا UTC، بعد +3:30
+        utc_dt = datetime.utcfromtimestamp(timestamp)
+        tehran_time = utc_dt + timedelta(hours=3, minutes=30)
     return tehran_time
+
+
+# ===================== توابع ICT (Michael Huddleston) =====================
+
+def is_ict_killzone():
+    """چک کردن ICT Killzone (زمان‌های کلیدی معاملاتی)
+    
+    London Killzone: 10:30 - 13:30 Tehran (08:00 - 11:00 GMT)
+    NY Killzone: 16:00 - 19:00 Tehran (13:30 - 16:30 GMT)  
+    NY Close: 21:00 - 22:00 Tehran (18:30 - 19:30 GMT)
+    """
+    dt = get_tehran_time()
+    hour = dt.hour
+    minute = dt.minute
+    time_val = hour + minute / 60.0
+    
+    # London Killzone: 10:30 - 13:30
+    london = 10.5 <= time_val <= 13.5
+    # NY Killzone: 16:00 - 19:00  
+    ny = 16.0 <= time_val <= 19.0
+    # NY Close: 21:00 - 22:00
+    ny_close = 21.0 <= time_val <= 22.0
+    
+    return {
+        "in_killzone": london or ny or ny_close,
+        "london": london,
+        "ny": ny,
+        "ny_close": ny_close,
+        "current_time": f"{hour:02d}:{minute:02d}"
+    }
+
+
+def detect_fvg(candles, direction="bullish", lookback=20):
+    """تشخیص Fair Value Gap (FVG)
+    
+    Bullish FVG: low[i] > high[i-2] (-gap صعودی)
+    Bearish FVG: high[i] < low[i-2] (-gap نزولی)
+    
+    Returns: list of FVGs with price levels
+    """
+    fvgs = []
+    n = len(candles)
+    start = max(0, n - lookback)
+    
+    for i in range(start + 2, n):
+        c = candles[i]
+        c_minus_2 = candles[i-2]
+        
+        if direction == "bullish":
+            # Bullish FVG: Low of i > High of i-2
+            if c["low"] > c_minus_2["high"]:
+                fvgs.append({
+                    "type": "bullish",
+                    "top": c["low"],
+                    "bottom": c_minus_2["high"],
+                    "index": i,
+                })
+        else:
+            # Bearish FVG: High of i < Low of i-2
+            if c["high"] < c_minus_2["low"]:
+                fvgs.append({
+                    "type": "bearish",
+                    "top": c_minus_2["low"],
+                    "bottom": c["high"],
+                    "index": i,
+                })
+    
+    return fvgs
+
+
+def detect_order_blocks(candles, direction="bullish", lookback=30):
+    """تشخیص Order Block (OB)
+    
+    Bullish OB: آخرین کندل نزولی (bearish) قبل از حرکت صعودی قوی
+    Bearish OB: آخرین کندل صعودی (bullish) قبل از حرکت نزولی قوی
+    
+    Returns: list of OBs with price levels
+    """
+    obs = []
+    n = len(candles)
+    start = max(0, n - lookback)
+    
+    for i in range(start + 1, n - 1):
+        c = candles[i]
+        c_next = candles[i+1]
+        
+        # Bullish OB: candle i bearish, candle i+1 strongly bullish
+        if direction == "bullish":
+            c_bearish = c["close"] < c["open"]
+            next_bullish_strong = (c_next["close"] - c_next["open"]) > abs(c["open"] - c["close"]) * 1.5
+            next_bullish = c_next["close"] > c_next["open"]
+            
+            if c_bearish and next_bullish and next_bullish_strong:
+                obs.append({
+                    "type": "bullish",
+                    "high": c["high"],
+                    "low": c["low"],
+                    "index": i,
+                })
+        else:
+            # Bearish OB: candle i bullish, candle i+1 strongly bearish
+            c_bullish = c["close"] > c["open"]
+            next_bearish_strong = (c_next["open"] - c_next["close"]) > abs(c["open"] - c["close"]) * 1.5
+            next_bearish = c_next["close"] < c_next["open"]
+            
+            if c_bullish and next_bearish and next_bearish_strong:
+                obs.append({
+                    "type": "bearish",
+                    "high": c["high"],
+                    "low": c["low"],
+                    "index": i,
+                })
+    
+    return obs
+
+
+def detect_liquidity_sweep(candles, direction="bullish", lookback=30):
+    """تشخیص Liquidity Sweep
+    
+    Bullish Sweep: قیمت Swing Low رو می‌شکونه و برمی‌گرده (wick below + close above)
+    Bearish Sweep: قیمت Swing High رو می‌شکونه و برمی‌گرده (wick above + close below)
+    
+    Returns: dict with sweep info or None
+    """
+    n = len(candles)
+    if n < lookback + 5:
+        return None
+    
+    start = max(0, n - lookback)
+    recent = candles[start:]
+    
+    # Find swing highs/lows
+    swings_high = []
+    swings_low = []
+    
+    for i in range(2, len(recent) - 2):
+        # Swing High
+        if recent[i]["high"] > recent[i-1]["high"] and recent[i]["high"] > recent[i-2]["high"] and \
+           recent[i]["high"] > recent[i+1]["high"] and recent[i]["high"] > recent[i+2]["high"]:
+            swings_high.append((i, recent[i]["high"]))
+        
+        # Swing Low
+        if recent[i]["low"] < recent[i-1]["low"] and recent[i]["low"] < recent[i-2]["low"] and \
+           recent[i]["low"] < recent[i+1]["low"] and recent[i]["low"] < recent[i+2]["low"]:
+            swings_low.append((i, recent[i]["low"]))
+    
+    if not swings_high or not swings_low:
+        return None
+    
+    last_candle = recent[-1]
+    
+    if direction == "bullish":
+        # Bullish sweep: break below last swing low, then close above
+        if len(swings_low) >= 2:
+            recent_swing_low = swings_low[-1][1]
+            prev_swing_low = swings_low[-2][1]
+            
+            # Wick below swing low but close above
+            if last_candle["low"] < prev_swing_low and last_candle["close"] > prev_swing_low:
+                return {
+                    "type": "bullish",
+                    "swept_level": prev_swing_low,
+                    "close": last_candle["close"],
+                    "wick": last_candle["low"],
+                }
+    else:
+        # Bearish sweep: break above last swing high, then close below
+        if len(swings_high) >= 2:
+            recent_swing_high = swings_high[-1][1]
+            prev_swing_high = swings_high[-2][1]
+            
+            # Wick above swing high but close below
+            if last_candle["high"] > prev_swing_high and last_candle["close"] < prev_swing_high:
+                return {
+                    "type": "bearish",
+                    "swept_level": prev_swing_high,
+                    "close": last_candle["close"],
+                    "wick": last_candle["high"],
+                }
+    
+    return None
+
+
+def detect_market_structure_shift(candles, lookback=50):
+    """تشخیص Market Structure Shift (MSS)
+    
+    Bullish MSS: شکست High قبلی (BOS) + Higher Low
+    Bearish MSS: شکست Low قبلی (BOS) + Lower High
+    
+    Returns: dict with MSS info or None
+    """
+    n = len(candles)
+    if n < lookback + 10:
+        return None
+    
+    start = max(0, n - lookback)
+    recent = candles[start:]
+    
+    # Find significant highs and lows
+    highs = [(i, c["high"]) for i, c in enumerate(recent)]
+    lows = [(i, c["low"]) for i, c in enumerate(recent)]
+    
+    if len(highs) < 10 or len(lows) < 10:
+        return None
+    
+    # Recent significant levels
+    last_10_highs = sorted(highs[-10:], key=lambda x: x[1], reverse=True)
+    last_10_lows = sorted(lows[-10:], key=lambda x: x[1])
+    
+    significant_high = last_10_highs[0][1]
+    significant_low = last_10_lows[0][1]
+    
+    last_close = recent[-1]["close"]
+    prev_close = recent[-2]["close"]
+    
+    result = {"bullish_mss": False, "bearish_mss": False}
+    
+    # Bullish MSS: close above significant high
+    if last_close > significant_high and prev_close <= significant_high:
+        result["bullish_mss"] = True
+        result["broken_level"] = significant_high
+        result["direction"] = "bullish"
+    
+    # Bearish MSS: close below significant low
+    if last_close < significant_low and prev_close >= significant_low:
+        result["bearish_mss"] = True
+        result["broken_level"] = significant_low
+        result["direction"] = "bearish"
+    
+    return result if (result["bullish_mss"] or result["bearish_mss"]) else None
+
+
+def find_nearest_fvg(fvgs, current_price, direction="bullish"):
+    """پیدا کردن نزدیک‌ترین FVG به قیمت فعلی"""
+    if not fvgs:
+        return None
+    
+    if direction == "bullish":
+        # For long: find FVG below current price (discount zone)
+        valid = [f for f in fvgs if f["bottom"] < current_price]
+        if valid:
+            return min(valid, key=lambda f: abs(current_price - f["bottom"]))
+    else:
+        # For short: find FVG above current price (premium zone)
+        valid = [f for f in fvgs if f["top"] > current_price]
+        if valid:
+            return min(valid, key=lambda f: abs(current_price - f["top"]))
+    
+    return None
+
+
+def find_nearest_ob(obs, current_price, direction="bullish"):
+    """پیدا کردن نزدیک‌ترین Order Block به قیمت فعلی"""
+    if not obs:
+        return None
+    
+    if direction == "bullish":
+        # For long: find OB below current price
+        valid = [o for o in obs if o["high"] < current_price]
+        if valid:
+            return min(valid, key=lambda o: abs(current_price - o["high"]))
+    else:
+        # For short: find OB above current price
+        valid = [o for o in obs if o["low"] > current_price]
+        if valid:
+            return min(valid, key=lambda o: abs(current_price - o["low"]))
+    
+    return None
+
+
+def ict_analyze(candles_1h, candles_15m=None):
+    """تحلیل کامل ICT و برگردوندن امتیاز و دلایل"""
+    if not candles_1h or len(candles_1h) < 30:
+        return {"score": 0, "reasons": [], "valid": False}
+    
+    current_price = candles_1h[-1]["close"]
+    reasons = []
+    ict_score = 0
+    
+    # 1. Killzone check
+    kz = is_ict_killzone()
+    if kz["in_killzone"]:
+        ict_score += 15
+        zone_name = []
+        if kz["london"]: zone_name.append("London")
+        if kz["ny"]: zone_name.append("NY")
+        if kz["ny_close"]: zone_name.append("NY Close")
+        reasons.append(f"ICT Killzone: {', '.join(zone_name)} ({kz['current_time']})")
+    else:
+        reasons.append(f"⚠️ خارج از ICT Killzone ({kz['current_time']}) - وین ریت پایین‌تر")
+    
+    # 2. Detect FVGs for both directions
+    fvg_bull = detect_fvg(candles_1h, "bullish", 30)
+    fvg_bear = detect_fvg(candles_1h, "bearish", 30)
+    
+    # 3. Detect OBs
+    ob_bull = detect_order_blocks(candles_1h, "bullish", 30)
+    ob_bear = detect_order_blocks(candles_1h, "bearish", 30)
+    
+    # 4. Liquidity sweep
+    sweep_bull = detect_liquidity_sweep(candles_1h, "bullish", 30)
+    sweep_bear = detect_liquidity_sweep(candles_1h, "bearish", 30)
+    
+    # 5. Market Structure
+    mss = detect_market_structure_shift(candles_1h, 50)
+    
+    # Find nearest levels
+    nearest_fvg_bull = find_nearest_fvg(fvg_bull, current_price, "bullish")
+    nearest_fvg_bear = find_nearest_fvg(fvg_bear, current_price, "bearish")
+    nearest_ob_bull = find_nearest_ob(ob_bull, current_price, "bullish")
+    nearest_ob_bear = find_nearest_ob(ob_bear, current_price, "bearish")
+    
+    # Calculate bullish ICT score
+    bull_score = 0
+    bull_reasons = []
+    
+    if nearest_fvg_bull:
+        bull_score += 15
+        dist = (current_price - nearest_fvg_bull["bottom"]) / current_price * 100
+        bull_reasons.append(f"FVG صعودی: قیمت {dist:.1f}% بالای ناحیه عدم تعادل")
+    
+    if nearest_ob_bull:
+        bull_score += 15
+        dist = (current_price - nearest_ob_bull["high"]) / current_price * 100
+        bull_reasons.append(f"Order Block صعودی: {dist:.1f}% بالای OB")
+    
+    if sweep_bull:
+        bull_score += 20
+        bull_reasons.append(f"Liquidity Sweep صعودی: جمع‌آوری نقدینگی زیر swing low")
+    
+    if mss and mss.get("bullish_mss"):
+        bull_score += 20
+        bull_reasons.append("Market Structure Shift صعودی: شکست High قبلی")
+    
+    # Calculate bearish ICT score
+    bear_score = 0
+    bear_reasons = []
+    
+    if nearest_fvg_bear:
+        bear_score += 15
+        dist = (nearest_fvg_bear["top"] - current_price) / current_price * 100
+        bear_reasons.append(f"FVG نزولی: قیمت {dist:.1f}% زیر ناحیه عدم تعادل")
+    
+    if nearest_ob_bear:
+        bear_score += 15
+        dist = (nearest_ob_bear["low"] - current_price) / current_price * 100
+        bear_reasons.append(f"Order Block نزولی: {dist:.1f}% زیر OB")
+    
+    if sweep_bear:
+        bear_score += 20
+        bear_reasons.append(f"Liquidity Sweep نزولی: جمع‌آوری نقدینگی بالای swing high")
+    
+    if mss and mss.get("bearish_mss"):
+        bear_score += 20
+        bear_reasons.append("Market Structure Shift نزولی: شکست Low قبلی")
+    
+    # Determine best direction
+    if bull_score >= bear_score and bull_score > 0:
+        ict_score += bull_score
+        reasons.extend(bull_reasons)
+        preferred_direction = "LONG"
+    elif bear_score > bull_score and bear_score > 0:
+        ict_score += bear_score
+        reasons.extend(bear_reasons)
+        preferred_direction = "SHORT"
+    else:
+        preferred_direction = "NEUTRAL"
+        reasons.append("هیچ ستاپ ICT قوی پیدا نشد")
+    
+    # 15m confirmation
+    if candles_15m and len(candles_15m) >= 30:
+        fvg_15m_bull = detect_fvg(candles_15m, "bullish", 20)
+        fvg_15m_bear = detect_fvg(candles_15m, "bearish", 20)
+        
+        if preferred_direction == "LONG" and fvg_15m_bull:
+            ict_score += 5
+            reasons.append("تایید 15m: FVG صعودی در تایم‌فریم پایین‌تر")
+        elif preferred_direction == "SHORT" and fvg_15m_bear:
+            ict_score += 5
+            reasons.append("تایید 15m: FVG نزولی در تایم‌فریم پایین‌تر")
+    
+    # Valid if score >= 40 (strong ICT setup)
+    valid = ict_score >= 40 and kz["in_killzone"]
+    
+    return {
+        "score": min(ict_score, 100),
+        "reasons": reasons,
+        "valid": valid,
+        "direction": preferred_direction,
+        "killzone": kz,
+        "fvg_bull": len(fvg_bull),
+        "fvg_bear": len(fvg_bear),
+        "ob_bull": len(ob_bull),
+        "ob_bear": len(ob_bear),
+        "has_sweep": sweep_bull is not None or sweep_bear is not None,
+        "mss": mss,
+    }
 
 
 def format_persian_time(timestamp=None):
@@ -389,6 +790,30 @@ class SignalEngine:
                 reasons.append("روند 4H نزولی - تایید جهت")
             scores.append(("4H Trend", h4_score))
 
+        # === 8. ICT Analysis (Michael Huddleston Strategy) ===
+        ict_result = ict_analyze(candles_1h, candles_15m)
+        ict_score = ict_result.get("score", 0)
+        ict_valid = ict_result.get("valid", False)
+        ict_direction = ict_result.get("direction", "NEUTRAL")
+        ict_reasons = ict_result.get("reasons", [])
+        
+        scores.append(("ICT", ict_score))
+        
+        # ICT direction votes (heavy weight for high win rate)
+        if ict_direction == "LONG":
+            direction_votes["LONG"] += 4  # وزن بالا برای ICT
+            reasons.extend(ict_reasons)
+        elif ict_direction == "SHORT":
+            direction_votes["SHORT"] += 4
+            reasons.extend(ict_reasons)
+        else:
+            reasons.append("⚠️ هیچ ستاپ ICT قوی پیدا نشد - سیگنال احتمالاً ضعیف")
+        
+        # Killzone warning
+        kz = ict_result.get("killzone", {})
+        if not kz.get("in_killzone", False):
+            reasons.append("⚠️ خارج از ICT Killzone - وین ریت پایین‌تر از 95%")
+
         # === تصمیم نهایی ===
         total_score = sum(s[1] for s in scores) / len(scores) if scores else 50
 
@@ -409,8 +834,9 @@ class SignalEngine:
         else:
             min_score = 60 if is_shitcoin else MIN_SIGNAL_SCORE
 
-        # اگه امتیاز کافی نبود یا جهت خنثی بود
+        # اگه امتیاز کافی نبود یا جهت خنثی بود یا ICT ضعیف بود
         if direction == "NEUTRAL" or total_score < min_score:
+            reasons.append(f"سیگنال رد شد: امتیاز={total_score:.0f}، حداقل={min_score}")
             return {
                 "symbol": symbol,
                 "base": base or symbol,
@@ -424,6 +850,46 @@ class SignalEngine:
                     "whale": whale_trades,
                     "cvd": cvd,
                     "scores": scores,
+                },
+            }
+        
+        # ICT validation check (must have valid ICT setup for 95%+ win rate)
+        if not ict_valid:
+            reasons.append(f"سیگنال رد شد: ICT setup ضعیف (score={ict_score:.0f}) - نیاز به FVG/OB/Sweep/MSS قوی")
+            return {
+                "symbol": symbol,
+                "base": base or symbol,
+                "direction": "NEUTRAL",
+                "score": total_score,
+                "reasons": reasons,
+                "is_shitcoin": is_shitcoin,
+                "analysis": {
+                    "order_flow": of_result,
+                    "liquidity": sr,
+                    "whale": whale_trades,
+                    "cvd": cvd,
+                    "scores": scores,
+                    "ict": ict_result,
+                },
+            }
+        
+        # Direction must match ICT direction for confirmation
+        if ict_direction != "NEUTRAL" and direction != ict_direction:
+            reasons.append(f"سیگنال رد شد: جهت ({direction}) با ICT ({ict_direction}) همخوانی ندارد")
+            return {
+                "symbol": symbol,
+                "base": base or symbol,
+                "direction": "NEUTRAL",
+                "score": total_score,
+                "reasons": reasons,
+                "is_shitcoin": is_shitcoin,
+                "analysis": {
+                    "order_flow": of_result,
+                    "liquidity": sr,
+                    "whale": whale_trades,
+                    "cvd": cvd,
+                    "scores": scores,
+                    "ict": ict_result,
                 },
             }
 
@@ -485,6 +951,7 @@ class SignalEngine:
             "warning_time": format_persian_time(time.time() + (MAX_POSITION_DURATION_HOURS * 3600) - (POSITION_EXPIRY_WARNING_MINUTES * 60)),
             "warning_time_short": format_persian_datetime_short(time.time() + (MAX_POSITION_DURATION_HOURS * 3600) - (POSITION_EXPIRY_WARNING_MINUTES * 60)),
             "max_duration_hours": MAX_POSITION_DURATION_HOURS,
+            "ict_analysis": ict_result,
             "analysis": {
                 "order_flow": {
                     "trend": of_result.get("trend"),
@@ -675,10 +1142,36 @@ class SignalEngine:
 📈 سود مورد انتظار: {expected_profit:.1f}%
 💰 سود با اهرم {leverage}x: ~{expected_profit * leverage:.0f}%
 
+📊 ICT Strategy (Michael Huddleston):
+🎯 وین ریت هدف: 95%+
+📈 حداقل سود: 70%+
+⏰ فقط در Killzone (London/NY)
+
 📋 دلایل سیگنال:
 """
         for r in reasons:
             msg += f"  • {r}\n"
+        
+        # ICT details
+        ict = signal.get('ict_analysis', {})
+        if ict:
+            msg += "\n🔷 ICT Confirmations:\n"
+            if ict.get('fvg_bull', 0) > 0 or ict.get('fvg_bear', 0) > 0:
+                msg += f"  ✓ Fair Value Gap detected\n"
+            if ict.get('ob_bull', 0) > 0 or ict.get('ob_bear', 0) > 0:
+                msg += f"  ✓ Order Block detected\n"
+            if ict.get('has_sweep', False):
+                msg += f"  ✓ Liquidity Sweep confirmed\n"
+            if ict.get('mss'):
+                msg += f"  ✓ Market Structure Shift\n"
+            
+            kz = ict.get('killzone', {})
+            if kz.get('in_killzone'):
+                zones = []
+                if kz.get('london'): zones.append('London')
+                if kz.get('ny'): zones.append('NY')
+                if kz.get('ny_close'): zones.append('NY Close')
+                msg += f"  ✓ Killzone: {', '.join(zones)}\n"
 
         entry_time = signal.get('entry_time', '')
         exit_time = signal.get('exit_time', '')

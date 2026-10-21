@@ -197,15 +197,15 @@ FUTURES_LEVERAGE_MAIN = 10    # ارزهای اصلی (BTC, ETH, etc.)
 FUTURES_LEVERAGE_SHITCOIN = 5  # شت‌کوین‌ها (ریسک بالاتر = اهرم کمتر)
 
 # حداکثر درصد استاپ برای فیوچر (فاصله از نقطه ورود تا استاپ)
-# استاپ‌های تighter برای جلوگیری از لیکویید شدن
-MAX_FUTURES_STOP_PCT_MAIN = 3.0       # 3% برای ارزهای اصلی
-MAX_FUTURES_STOP_PCT_SHITCOIN = 5.0   # 5% برای شت‌کوین‌ها
+# برای ICT: استاپ‌های منطقی‌تر برای RR بالا
+MAX_FUTURES_STOP_PCT_MAIN = 6.0       # 6% برای RR بالاتر
+MAX_FUTURES_STOP_PCT_SHITCOIN = 8.0   # 8% برای شت‌کوین
 
-# ضریب هدف سود برای فیوچر (بالاتر چون اهرم داره)
-FUTURES_TP_RATIOS = [2.0, 4.0, 7.0]  # R:R برای ارزهای اصلی
-FUTURES_TP_RATIOS_SHITCOIN = [3.0, 6.0, 10.0]  # R:R برای شت‌کوین
+# TP Ratios برای ICT (بسیار بالا برای سودهای بزرگ)
+FUTURES_TP_RATIOS = [10.0, 20.0, 30.0]  # RR = 10, 20, 30
+FUTURES_TP_RATIOS_SHITCOIN = [12.0, 24.0, 36.0]
 
-# حداقل درصد سود برای سیگنال فیوچر
+# حداقل درصد سود برای سیگنال فیوچر (قبل از اهرم)
 MIN_FUTURES_PROFIT_MAIN = 5.0       # 5% برای ارزهای اصلی
 MIN_FUTURES_PROFIT_SHITCOIN = 8.0   # 8% برای شت‌کوین
 
@@ -213,12 +213,26 @@ MIN_FUTURES_PROFIT_SHITCOIN = 8.0   # 8% برای شت‌کوین
 MIN_FUTURES_SCORE_MAIN = 45       # 45/100 برای ارزهای اصلی
 MIN_FUTURES_SCORE_SHITCOIN = 40
 
+# ===================== تنظیمات ICT (Inner Circle Trader) =====================
+# استراتژی Michael Huddleston برای وین ریت بالا
+
+# حداقل سود واقعی قبل از اهرم (TP1 باید حداقل اینقدر باشه)
+MIN_FUTURES_PROFIT_MAIN = 15.0      # 15% واقعی = 150% با اهرم 10x
+MIN_FUTURES_PROFIT_SHITCOIN = 20.0  # 20% واقعی = 200% با اهرم 10x
+
+# حداقل امتیاز ICT (برای وین ریت بالا)
+MIN_FUTURES_SCORE_MAIN = 50       # 50/100 - ICT validation الزامی
+MIN_FUTURES_SCORE_SHITCOIN = 45   # 45/100
+
+# فقط تایم‌فریم‌های ICT
+ICT_TIMEFRAMES = ['1h', '15m']
+
 # ===================== تنظیمات زمان‌بندی پوزیشن =====================
 # حداکثر زمان باز بودن پوزیشن (به ساعت)
-MAX_POSITION_DURATION_HOURS = 4  # 4 ساعت - بعدش باید ببندی
+MAX_POSITION_DURATION_HOURS = 4  # 4 ساعت - هماهنگ با ICT killzone
 
 # هشدار قبل از اتمام زمان (به دقیقه)
-POSITION_EXPIRY_WARNING_MINUTES = 30  # 30 دقیقه قبل هشدار بده   # 40/100‌کوین
+POSITION_EXPIRY_WARNING_MINUTES = 30  # 30 دقیقه قبل هشدار بده
 
 # ===================== تنظیمات Order Flow =====================
 # تعداد کندل‌ها برای تحلیل order flow
