@@ -37,6 +37,10 @@ from core.liquidity import LiquidityScanner
 from core.whale_scanner import WhaleScanner
 from core.whale_hunter import WhaleHunter
 from core.pre_movement_detector import PreMovementDetector
+from core.zone_hunter import ZoneHunter
+from core.order_flow_matrix import OrderFlowMatrix
+from core.market_context import MarketContextAnalyzer
+from core.funding_oi import FundingOIAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -60,29 +64,40 @@ def get_tehran_time(timestamp=None):
 # ===================== توابع ICT (Michael Huddleston) =====================
 
 def is_ict_killzone():
-    """چک کردن ICT Killzone (زمان‌های کلیدی معاملاتی)
+    """چک کردن زمان‌های کلیدی بازار (برای کریپتو 24/7)
     
-    London Killzone: 10:30 - 13:30 Tehran (08:00 - 11:00 GMT)
-    NY Killzone: 16:00 - 19:00 Tehran (13:30 - 16:30 GMT)  
+    Asian Session: 03:30 - 07:30 Tehran (01:00 - 05:00 GMT) - Tokyo open
+    London Session: 10:30 - 13:30 Tehran (08:00 - 11:00 GMT)
+    NY Session: 16:00 - 19:00 Tehran (13:30 - 16:30 GMT)
     NY Close: 21:00 - 22:00 Tehran (18:30 - 19:30 GMT)
+    
+    NOTE: For crypto 24/7 markets, these are high volatility periods,
+    not hard filters. Signals can fire at any time.
     """
     dt = get_tehran_time()
     hour = dt.hour
     minute = dt.minute
     time_val = hour + minute / 60.0
     
-    # London Killzone: 10:30 - 13:30
+    # Asian Session (Tokyo): 03:30 - 07:30 Tehran
+    asia = 3.5 <= time_val <= 7.5
+    # London Session: 10:30 - 13:30
     london = 10.5 <= time_val <= 13.5
-    # NY Killzone: 16:00 - 19:00  
+    # NY Session: 16:00 - 19:00  
     ny = 16.0 <= time_val <= 19.0
     # NY Close: 21:00 - 22:00
     ny_close = 21.0 <= time_val <= 22.0
     
+    # Crypto weekend (Fri 22:00 - Sun 22:00 Tehran) - often volatile
+    is_weekend = dt.weekday() >= 4  # Friday evening onward
+    
     return {
-        "in_killzone": london or ny or ny_close,
+        "in_killzone": asia or london or ny or ny_close,
+        "asia": asia,
         "london": london,
         "ny": ny,
         "ny_close": ny_close,
+        "is_weekend": is_weekend,
         "current_time": f"{hour:02d}:{minute:02d}"
     }
 
@@ -238,6 +253,81 @@ def detect_liquidity_sweep(candles, direction="bullish", lookback=30):
     return None
 
 
+def detect_bos_choch(candles, lookback=50):
+    """
+    تشخیص BOS (Break of Structure) و CHoCH (Change of Character)
+    
+    BOS: شکست High/Low قبلی در جهت ترند فعلی = ادامه ترند
+    CHoCH: اولین شکست خلاف جهت ترند = تغییر احتمالی ترند
+    
+    Returns: dict with BOS/CHoCH info
+    """
+    n = len(candles)
+    if n < lookback + 10:
+        return None
+    
+    start = max(0, n - lookback)
+    recent = candles[start:]
+    
+    # Find swing highs and lows (simplified)
+    highs = []
+    lows = []
+    for i in range(2, len(recent) - 2):
+        h = recent[i]["high"]
+        l = recent[i]["low"]
+        if h > recent[i-1]["high"] and h > recent[i-2]["high"] and h > recent[i+1]["high"] and h > recent[i+2]["high"]:
+            highs.append((i, h))
+        if l < recent[i-1]["low"] and l < recent[i-2]["low"] and l < recent[i+1]["low"] and l < recent[i+2]["low"]:
+            lows.append((i, l))
+    
+    if len(highs) < 3 or len(lows) < 3:
+        return None
+    
+    # Determine recent trend (last 20 candles)
+    last_20 = recent[-20:]
+    avg_start = sum(c["close"] for c in last_20[:10]) / 10
+    avg_end = sum(c["close"] for c in last_20[-10:]) / 10
+    recent_trend = "up" if avg_end > avg_start else "down"
+    
+    # Get last 3 swing points
+    last_3_highs = highs[-3:]
+    last_3_lows = lows[-3:]
+    
+    result = {
+        "bos_bullish": False,
+        "bos_bearish": False,
+        "choch_bullish": False,
+        "choch_bearish": False,
+        "recent_trend": recent_trend,
+    }
+    
+    # BOS Bullish: higher high after higher low (uptrend continuation)
+    if len(last_3_highs) >= 2 and len(last_3_lows) >= 2:
+        if last_3_highs[-1][1] > last_3_highs[-2][1] and last_3_lows[-1][1] > last_3_lows[-2][1]:
+            result["bos_bullish"] = True
+            result["bos_level"] = last_3_highs[-2][1]
+    
+    # BOS Bearish: lower low after lower high (downtrend continuation)
+    if len(last_3_highs) >= 2 and len(last_3_lows) >= 2:
+        if last_3_lows[-1][1] < last_3_lows[-2][1] and last_3_highs[-1][1] < last_3_highs[-2][1]:
+            result["bos_bearish"] = True
+            result["bos_level"] = last_3_lows[-2][1]
+    
+    # CHoCH Bullish: in downtrend, price makes higher low then higher high
+    if recent_trend == "down" and len(last_3_lows) >= 2:
+        if last_3_lows[-1][1] > last_3_lows[-2][1]:
+            result["choch_bullish"] = True
+            result["choch_level"] = last_3_lows[-2][1]
+    
+    # CHoCH Bearish: in uptrend, price makes lower high then lower low
+    if recent_trend == "up" and len(last_3_highs) >= 2:
+        if last_3_highs[-1][1] < last_3_highs[-2][1]:
+            result["choch_bearish"] = True
+            result["choch_level"] = last_3_highs[-2][1]
+    
+    return result
+
+
 def detect_market_structure_shift(candles, lookback=50):
     """تشخیص Market Structure Shift (MSS)
     
@@ -334,17 +424,16 @@ def ict_analyze(candles_1h, candles_15m=None):
     reasons = []
     ict_score = 0
     
-    # 1. Killzone check
+    # 1. Killzone check (informational for crypto 24/7 markets)
     kz = is_ict_killzone()
     if kz["in_killzone"]:
-        ict_score += 15
+        ict_score += 5  # small bonus for high volatility period
         zone_name = []
         if kz["london"]: zone_name.append("London")
         if kz["ny"]: zone_name.append("NY")
         if kz["ny_close"]: zone_name.append("NY Close")
-        reasons.append(f"ICT Killzone: {', '.join(zone_name)} ({kz['current_time']})")
-    else:
-        reasons.append(f"⚠️ خارج از ICT Killzone ({kz['current_time']}) - وین ریت پایین‌تر")
+        reasons.append(f"🌍 زمان کلیدی بازار: {', '.join(zone_name)} ({kz['current_time']})")
+    # NOTE: No penalty for being outside killzone - crypto is 24/7
     
     # 2. Detect FVGs for both directions
     fvg_bull = detect_fvg(candles_1h, "bullish", 30)
@@ -358,8 +447,9 @@ def ict_analyze(candles_1h, candles_15m=None):
     sweep_bull = detect_liquidity_sweep(candles_1h, "bullish", 30)
     sweep_bear = detect_liquidity_sweep(candles_1h, "bearish", 30)
     
-    # 5. Market Structure
+    # 5. Market Structure (MSS + BOS + CHoCH)
     mss = detect_market_structure_shift(candles_1h, 50)
+    bos_choch = detect_bos_choch(candles_1h, 50)
     
     # Find nearest levels
     nearest_fvg_bull = find_nearest_fvg(fvg_bull, current_price, "bullish")
@@ -389,6 +479,15 @@ def ict_analyze(candles_1h, candles_15m=None):
         bull_score += 20
         bull_reasons.append("Market Structure Shift صعودی: شکست High قبلی")
     
+    # BOS/CHoCH bullish
+    if bos_choch:
+        if bos_choch.get("bos_bullish"):
+            bull_score += 15
+            bull_reasons.append("🚀 BOS صعودی: Higher High + Higher Low (ادامه ترند)")
+        if bos_choch.get("choch_bullish"):
+            bull_score += 20
+            bull_reasons.append("🔄 CHoCH صعودی: تغییر جهت از نزولی به صعودی!")
+    
     # Calculate bearish ICT score
     bear_score = 0
     bear_reasons = []
@@ -410,6 +509,15 @@ def ict_analyze(candles_1h, candles_15m=None):
     if mss and mss.get("bearish_mss"):
         bear_score += 20
         bear_reasons.append("Market Structure Shift نزولی: شکست Low قبلی")
+    
+    # BOS/CHoCH bearish
+    if bos_choch:
+        if bos_choch.get("bos_bearish"):
+            bear_score += 15
+            bear_reasons.append("🔻 BOS نزولی: Lower Low + Lower High (ادامه ترند)")
+        if bos_choch.get("choch_bearish"):
+            bear_score += 20
+            bear_reasons.append("🔄 CHoCH نزولی: تغییر جهت از صعودی به نزولی!")
     
     # Determine best direction
     if bull_score >= bear_score and bull_score > 0:
@@ -437,7 +545,8 @@ def ict_analyze(candles_1h, candles_15m=None):
             reasons.append("تایید 15m: FVG نزولی در تایم‌فریم پایین‌تر")
     
     # Valid if score >= 40 (strong ICT setup)
-    valid = ict_score >= 40 and kz["in_killzone"]
+    # NOTE: Killzone is informational only for crypto 24/7 markets
+    valid = ict_score >= 40
     
     return {
         "score": min(ict_score, 100),
@@ -451,6 +560,7 @@ def ict_analyze(candles_1h, candles_15m=None):
         "ob_bear": len(ob_bear),
         "has_sweep": sweep_bull is not None or sweep_bear is not None,
         "mss": mss,
+        "bos_choch": bos_choch,
     }
 
 
@@ -515,6 +625,10 @@ class SignalEngine:
         self.whale = WhaleScanner()
         self.whale_hunter = WhaleHunter()
         self.pre_movement = PreMovementDetector()  # تشخیص قبل از حرکت
+        self.zone_hunter = ZoneHunter()  # ZoneHunter indicator
+        self.order_flow_matrix = OrderFlowMatrix()  # Order Flow Imbalance Matrix PRO
+        self.market_context = MarketContextAnalyzer()  # BTC trend + Market Regime
+        self.funding_oi = FundingOIAnalyzer()  # Funding Rate + Open Interest
         self.signal_history = {}  # symbol -> last_signal_time
 
     def quick_scan(self, symbol, base=None, is_shitcoin=False):
@@ -638,6 +752,29 @@ class SignalEngine:
                 candles_1h, order_book, current_price
             )
 
+            # تحلیل ZoneHunter (Triple SuperTrend + TTD + VWAP Divergence)
+            zone_hunter_result = self.zone_hunter.analyze(
+                candles=candles_1h,
+                candles_4h=candles_4h if candles_4h else None,
+            )
+
+            # تحلیل Order Flow Imbalance Matrix PRO
+            of_matrix_result = self.order_flow_matrix.analyze(
+                candles_1h=candles_1h,
+                candles_4h=candles_4h if candles_4h else None,
+                current_price=current_price,
+            )
+
+            # تحلیل زمینه بازار (BTC Trend + Market Regime + Correlation)
+            btc_candles = self.market.get_candles("BTCUSDT", "1h", 200)
+            market_ctx = self.market_context.analyze(
+                symbol_candles=candles_1h,
+                btc_candles=btc_candles if btc_candles else None,
+            )
+
+            # تحلیل Funding Rate + Open Interest
+            funding_oi_result = self.funding_oi.analyze(symbol)
+
             # اسکن نهنگ‌ها
             whale_trades = self.whale.scan_whale_trades(trades) if trades else None
             vol_anomalies = self.whale.scan_volume_anomalies(candles_1h)
@@ -665,6 +802,10 @@ class SignalEngine:
                 pump_dump_setup=pump_dump_setup,
                 whale_zones=whale_zones,
                 pre_movement=pre_movement,
+                zone_hunter=zone_hunter_result,
+                order_flow_matrix=of_matrix_result,
+                market_context=market_ctx,
+                funding_oi=funding_oi_result,
                 is_shitcoin=is_shitcoin,
             )
 
@@ -678,7 +819,8 @@ class SignalEngine:
                          of_result, trade_flow, sr, pools, book_walls,
                          whale_trades, vol_anomalies, cvd, of_4h,
                          whale_hunter=None, pump_dump_setup=None, whale_zones=None,
-                         pre_movement=None,
+                         pre_movement=None, zone_hunter=None, order_flow_matrix=None,
+                         market_context=None, funding_oi=None,
                          is_shitcoin=False):
         """ترکیب تمام تحلیل‌ها و تولید سیگنال نهایی"""
 
@@ -836,10 +978,15 @@ class SignalEngine:
         else:
             reasons.append("⚠️ هیچ ستاپ ICT قوی پیدا نشد - سیگنال احتمالاً ضعیف")
         
-        # Killzone warning
+        # Killzone info (informational only for crypto 24/7)
         kz = ict_result.get("killzone", {})
-        if not kz.get("in_killzone", False):
-            reasons.append("⚠️ خارج از ICT Killzone - وین ریت پایین‌تر از 95%")
+        if kz.get("in_killzone", False):
+            zone_name = []
+            if kz.get("london"): zone_name.append("London")
+            if kz.get("ny"): zone_name.append("NY")
+            if kz.get("ny_close"): zone_name.append("NY Close")
+            if zone_name:
+                reasons.append(f"🌍 زمان کلیدی بازار: {', '.join(zone_name)} (نوسان بالاتر)")
 
         # === 9. Whale Hunter Analysis (Advanced Whale Detection) ===
         if whale_hunter:
@@ -905,8 +1052,122 @@ class SignalEngine:
                 if vol_cl.get("climax"):
                     reasons.append(f"   📈 Volume: {vol_cl.get('volume_ratio', 0):.1f}x میانگین")
 
-        # === تصمیم نهایی ===
-        total_score = sum(s[1] for s in scores) / len(scores) if scores else 50
+        # === 11. Order Flow Imbalance Matrix PRO ===
+        if order_flow_matrix:
+            ofm_score = order_flow_matrix.get("score", 50)
+            ofm_dir = order_flow_matrix.get("direction", "NEUTRAL")
+            ofm_reasons = order_flow_matrix.get("reasons", [])
+            ofm_all_agree = order_flow_matrix.get("all_agree", False)
+            
+            scores.append(("OF Matrix", ofm_score))
+            
+            if ofm_dir == "LONG":
+                direction_votes["LONG"] += 2.5
+                reasons.extend(ofm_reasons[:3])
+            elif ofm_dir == "SHORT":
+                direction_votes["SHORT"] += 2.5
+                reasons.extend(ofm_reasons[:3])
+            
+            # All 3 components agree = strong signal
+            if ofm_all_agree:
+                reasons.append("🎯 Order Flow Matrix: هر 3 سیستم هم‌جهت!")
+                ofm_score += 10
+            
+            # HTF Levels
+            htf = order_flow_matrix.get("htf_levels", {})
+            if htf.get("signals"):
+                for s in htf["signals"][:1]:
+                    reasons.append(f"   {s}")
+            
+            # Imbalance Zones
+            imb = order_flow_matrix.get("imbalance_zones", {})
+            if imb.get("inside_zone"):
+                reasons.append("💎 قیمت داخل Imbalance Zone نهادی")
+            
+            # ATR Ribbon
+            ribbon = order_flow_matrix.get("atr_ribbon", {})
+            if ribbon.get("signals"):
+                for s in ribbon["signals"][:1]:
+                    reasons.append(f"   {s}")
+
+        # === 12. ZoneHunter Analysis (Triple SuperTrend + TTD + VWAP) ===
+        if zone_hunter:
+            zh_score = zone_hunter.get("score", 50)
+            zh_dir = zone_hunter.get("direction", "NEUTRAL")
+            zh_signals = zone_hunter.get("signals_count", 0)
+            zh_reasons = zone_hunter.get("reasons", [])
+            
+            scores.append(("ZoneHunter", zh_score))
+            
+            if zh_dir == "LONG":
+                direction_votes["LONG"] += 3
+                reasons.extend(zh_reasons[:3])
+            elif zh_dir == "SHORT":
+                direction_votes["SHORT"] += 3
+                reasons.extend(zh_reasons[:3])
+            
+            # Triple SuperTrend alignment bonus
+            triple_st = zone_hunter.get("triple_supertrend", {})
+            if triple_st.get("alignment") in ["strong_bullish", "strong_bearish"]:
+                reasons.append(f"🎯 Triple SuperTrend aligned: {triple_st.get('alignment')}")
+            
+            # TTD alignment
+            ttd = zone_hunter.get("ttd", {})
+            if ttd.get("alignment") in ["strong_bullish", "strong_bearish"]:
+                ttf_aligned = ttd.get("timeframe_trends", {})
+                reasons.append(f"📊 TTD: {len([t for t,v in ttf_aligned.items() if v == ttd.get('alignment', '').replace('strong_', '')])} timeframes aligned")
+            
+            # VWAP Divergence
+            vwap_div = zone_hunter.get("vwap_divergence", {})
+            if vwap_div.get("divergence"):
+                reasons.append(f"💎 VWAP Divergence: {vwap_div.get('type', '')}")
+
+        # === 13. Market Context (BTC Trend + Regime + Correlation) ===
+        if market_context:
+            ctx_signals = market_context.get("signals", [])
+            ctx_score = market_context.get("context_score", 50)
+            scores.append(("Market Context", ctx_score))
+            reasons.extend(ctx_signals[:3])
+            
+            # Regime info
+            regime = market_context.get("regime", {})
+            if regime.get("regime") == "ranging":
+                reasons.append(f"↔️ بازار رنج (ADX: {regime.get('adx')}) - فقط ستاپ‌های قوی قبول میشن")
+
+        # === 14. Funding Rate + Open Interest ===
+        if funding_oi:
+            funding_signals = funding_oi.get("signals", [])
+            funding_score = funding_oi.get("sentiment_score", 50)
+            scores.append(("Funding/OI", funding_score))
+            reasons.extend(funding_signals[:2])
+
+        # === تصمیم نهایی با امتیازدهی وزن‌دار ===
+        # Weighted scoring system
+        weights = {
+            "Order Flow": 1.5,
+            "Trade Flow": 1.0,
+            "Liquidity/SR": 1.0,
+            "Order Book": 1.0,
+            "Whale": 1.0,
+            "CVD": 1.2,
+            "4H Trend": 1.3,
+            "ICT": 1.5,
+            "WhaleHunter": 1.2,
+            "PreMovement": 1.5,
+            "OF Matrix": 1.3,
+            "ZoneHunter": 1.0,
+            "Market Context": 2.0,  # Highest weight - BTC is king
+            "Funding/OI": 1.3,
+        }
+        
+        weighted_sum = 0
+        weight_total = 0
+        for name, score in scores:
+            w = weights.get(name, 1.0)
+            weighted_sum += score * w
+            weight_total += w
+        
+        total_score = weighted_sum / weight_total if weight_total > 0 else 50
 
         # تعیین جهت
         # با داده KuCoin (100 ترید، تخمین takerBuyVolume)، آستانه رأی پایین‌تر
@@ -983,6 +1244,36 @@ class SignalEngine:
                     "ict": ict_result,
                 },
             }
+        
+        # === Market Context Direction Filter ===
+        if market_context and direction != "NEUTRAL":
+            ctx_filter = market_context.get("direction_filter")
+            if ctx_filter and direction != ctx_filter:
+                reasons.append(f"🚫 سیگنال {direction} رد شد: برخلاف جهت BTC/Correlation ({ctx_filter})")
+                return {
+                    "symbol": symbol,
+                    "base": base or symbol,
+                    "direction": "NEUTRAL",
+                    "score": total_score,
+                    "reasons": reasons,
+                    "is_shitcoin": is_shitcoin,
+                    "analysis": {"market_context": market_context, "filtered": True, "scores": scores},
+                }
+        
+        # === Funding/OI Direction Filter ===
+        if funding_oi and direction != "NEUTRAL":
+            funding_filter = funding_oi.get("direction_filter")
+            if funding_filter and direction != funding_filter:
+                reasons.append(f"🚫 سیگنال {direction} رد شد: برخلاف Funding Sentiment ({funding_filter})")
+                return {
+                    "symbol": symbol,
+                    "base": base or symbol,
+                    "direction": "NEUTRAL",
+                    "score": total_score,
+                    "reasons": reasons,
+                    "is_shitcoin": is_shitcoin,
+                    "analysis": {"funding_oi": funding_oi, "filtered": True, "scores": scores},
+                }
         
         # === FOMO Prevention ===
         # Don't enter after a huge candle (chasing = getting rekt)
@@ -1086,6 +1377,10 @@ class SignalEngine:
             "pump_dump_setup": pump_dump_setup,
             "whale_zones": whale_zones,
             "pre_movement": pre_movement,
+            "zone_hunter": zone_hunter,
+            "order_flow_matrix": order_flow_matrix,
+            "market_context": market_context,
+            "funding_oi": funding_oi,
             "analysis": {
                 "order_flow": {
                     "trend": of_result.get("trend"),
@@ -1305,7 +1600,7 @@ class SignalEngine:
 📊 ICT Strategy (Michael Huddleston):
 🎯 وین ریت هدف: 95%+
 📈 حداقل سود: 70%+
-⏰ فقط در Killzone (London/NY)
+🌐 کریپتو 24/7 - سیگنال در هر ساعت فعال
 
 📋 دلایل سیگنال:
 """
@@ -1325,13 +1620,25 @@ class SignalEngine:
             if ict.get('mss'):
                 msg += f"  ✓ Market Structure Shift\n"
             
+            bc = ict.get('bos_choch', {})
+            if bc:
+                if bc.get('bos_bullish'):
+                    msg += f"  ✓ BOS Bullish: Higher High\n"
+                elif bc.get('bos_bearish'):
+                    msg += f"  ✓ BOS Bearish: Lower Low\n"
+                if bc.get('choch_bullish'):
+                    msg += f"  ✓ CHoCH Bullish: Trend Reversal Up\n"
+                elif bc.get('choch_bearish'):
+                    msg += f"  ✓ CHoCH Bearish: Trend Reversal Down\n"
+            
             kz = ict.get('killzone', {})
             if kz.get('in_killzone'):
                 zones = []
+                if kz.get('asia'): zones.append('Asia')
                 if kz.get('london'): zones.append('London')
                 if kz.get('ny'): zones.append('NY')
                 if kz.get('ny_close'): zones.append('NY Close')
-                msg += f"  ✓ Killzone: {', '.join(zones)}\n"
+                msg += f"  🌍 سشن فعال: {', '.join(zones)}\n"
 
         # Whale Hunter details
         wh = signal.get('whale_hunter', {})
@@ -1364,6 +1671,87 @@ class SignalEngine:
                 msg += f"\n🚀 **ستاپ پمپ شناسایی شد!** (confidence: {conf}%)\n"
             elif setup == 'dump':
                 msg += f"\n🔻 **ستاپ دامپ شناسایی شد!** (confidence: {conf}%)\n"
+
+        # Order Flow Imbalance Matrix PRO
+        ofm = signal.get('order_flow_matrix', {})
+        if ofm and ofm.get('direction') != 'NEUTRAL':
+            ofm_dir = ofm.get('direction', '')
+            ofm_score = ofm.get('score', 0)
+            ofm_all_agree = ofm.get('all_agree', False)
+            msg += f"\n🏛️ **Order Flow Matrix PRO** ({ofm_dir}, score: {ofm_score})\n"
+            if ofm_all_agree:
+                msg += "   🎯 هر 3 سیستم هم‌جهت! (HTF + Imbalance + Ribbon)\n"
+            
+            htf = ofm.get('htf_levels', {})
+            if htf.get('signals'):
+                for s in htf['signals'][:1]:
+                    msg += f"   {s}\n"
+            
+            imb = ofm.get('imbalance_zones', {})
+            if imb.get('signals'):
+                for s in imb['signals'][:1]:
+                    msg += f"   {s}\n"
+            
+            ribbon = ofm.get('atr_ribbon', {})
+            if ribbon.get('signals'):
+                for s in ribbon['signals'][:1]:
+                    msg += f"   {s}\n"
+
+        # ZoneHunter Analysis
+        zh = signal.get('zone_hunter', {})
+        if zh and zh.get('direction') != 'NEUTRAL':
+            zh_dir = zh.get('direction', '')
+            zh_score = zh.get('score', 0)
+            msg += f"\n🎯 **ZoneHunter** ({zh_dir}, score: {zh_score})\n"
+            
+            triple_st = zh.get('triple_supertrend', {})
+            if triple_st.get('signals'):
+                for s in triple_st['signals'][:1]:
+                    msg += f"   {s}\n"
+            
+            ttd = zh.get('ttd', {})
+            if ttd.get('signals'):
+                for s in ttd['signals'][:1]:
+                    msg += f"   {s}\n"
+            
+            vwap = zh.get('vwap_divergence', {})
+            if vwap.get('signals'):
+                for s in vwap['signals'][:1]:
+                    msg += f"   {s}\n"
+
+        # Market Context (BTC + Regime + Correlation)
+        ctx = signal.get('market_context', {})
+        if ctx:
+            msg += "\n🌍 **Market Context:**\n"
+            
+            btc = ctx.get('btc_trend', {})
+            if btc.get('trend') != 'unknown':
+                msg += f"   ₿ BTC: {btc.get('trend')} (momentum: {btc.get('momentum', 0):+.1f}%)\n"
+            
+            regime = ctx.get('regime', {})
+            if regime.get('regime') != 'unknown':
+                msg += f"   📊 Regime: {regime.get('regime')} (ADX: {regime.get('adx')})\n"
+            
+            corr = ctx.get('correlation', {})
+            if corr.get('correlation') != 0:
+                msg += f"   🔗 Correlation with BTC: {corr.get('correlation'):.2f} ({corr.get('alignment')})\n"
+            
+            struct = ctx.get('structure', {})
+            if struct.get('structure') != 'unknown':
+                msg += f"   📐 Structure: {struct.get('structure')}\n"
+
+        # Funding Rate + Open Interest
+        fnd = signal.get('funding_oi', {})
+        if fnd and fnd.get('status') == 'active':
+            msg += "\n💰 **Funding & Open Interest:**\n"
+            rate = fnd.get('funding_rate', 0)
+            msg += f"   Funding Rate: {rate*100:.4f}%\n"
+            if fnd.get('open_interest'):
+                msg += f"   Open Interest: {fnd.get('open_interest'):,.0f}\n"
+            
+            hist = fnd.get('funding_history', {})
+            if hist and hist.get('rates'):
+                msg += f"   Funding Trend: {hist.get('trend')}\n"
 
         # Pre-Movement Detection
         pm = signal.get('pre_movement', {})
